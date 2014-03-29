@@ -1,0 +1,5 @@
+senddata(type,guid,ident,actualxp)
+type moznosti get_xp pro ziskani xp z db
+              update_xp pro update actualni xp
+              get_perks pro ziskani perku
+              set_perk //zatim neni

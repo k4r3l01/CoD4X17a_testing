@@ -1,33 +1,14 @@
-/*
-===========================================================================
-    Copyright (C) 2010-2013  Ninja and TheKelm of the IceOps-Team
-
-    This file is part of IceOps Plugin Handler source code.
-
-    IceOps Plugin Handler source code is free software: you can redistribute it and/or modify
-    it under the terms of the GNU Affero General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    IceOps Plugin Handler source code is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU Affero General Public License for more details.
-
-    You should have received a copy of the GNU Affero General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>
-===========================================================================
-*/
-
 #include <stdlib.h>
 #include <string.h>
-#include "censor.h"
 #include "../pinc.h"
+#include "censor.h"
+#include <sys/types.h>
+#include <regex.h>
+#include <stdio.h>
 
 typedef struct badwordsList_s {
     struct	badwordsList_s *next;
-    qboolean	exactmatch;
-    char	word[24];
+    char	word[1024];
 }badwordsList_t;
 
 badwordsList_t *badwords;
@@ -253,9 +234,8 @@ void G_SayCensor_Init()
 	fileHandle_t file;
 	int read;
 	badwordsList_t *this;
-	qboolean exactmatch;
-	char buff[24];
-	char line[24];
+	char buff[1024];
+	char line[1024];
 	char* linept;
 	register int i=0;
 
@@ -281,22 +261,16 @@ void G_SayCensor_Init()
             Q_strncpyz(line,buff,sizeof(line));
             linept = line;
 
-            if(*linept == '#'){
-                exactmatch = qtrue;
-                linept++;
-            }else{
-                exactmatch = qfalse;
-            }
 
             this = Plugin_Malloc(sizeof(badwordsList_t));
             if(this){
                 this->next = badwords;
-                this->exactmatch = exactmatch;
                 Q_strncpyz(this->word,linept,strlen(linept));
+                //Plugin_Printf("Regex num %i loaded: %s\n",i,this->word);
             	badwords = this;
 	    }
         }
-		Plugin_Printf("Censor: init complete.\n");
+	Plugin_Printf("Censor: init complete.\n");
 }
 
 char* censor_ignoreMultiple(char *output, char *string, size_t size)
@@ -320,12 +294,59 @@ char* censor_ignoreMultiple(char *output, char *string, size_t size)
 }
 
 
-char* G_SayCensor(char *msg)
+char* G_SayCensor(char *msg,int slot,char **isvulgarism)
+{
+	badwordsList_t *this;
+	char* ret = msg;
+	int vulg = 0;
+	char serverIp[64] = "88.86.107.13";
+	char *string;
+	if(msg[0] == 0x15) msg++;
+	for(this = badwords ; this ; this = this->next){
+			regex_t regex;
+			int reti;
+			char msgbuf[100];
+			const char * pattern = this->word;
+	/* Compile regular expression */
+			reti = regcomp(&regex, pattern, REG_EXTENDED);
+			if( reti ){
+				Plugin_PrintWarning("Could not compile regex %s\n", pattern); 
+				regfree(&regex);
+				continue;
+			}
+
+	/* Execute regular expression */
+			//Plugin_PrintWarning("pattern %s message %s",pattern,msg);
+			reti = regexec(&regex, msg, 0, NULL, 0);
+			if( !reti ){
+				string = strstr(msg,serverIp);
+				if(!string)
+					vulg++;
+			}
+			else if( reti == REG_NOMATCH ){
+				  //Plugin_PrintWarning("No regex match for %s\n", pattern);
+			}
+			else{
+				regerror(reti, &regex, msgbuf, sizeof(msgbuf));
+				//Plugin_PrintWarning("Regex match failed: %s\n", msgbuf);
+			}
+
+		regfree(&regex);
+	}
+	if(vulg > 0)
+	{
+		*isvulgarism = "true";
+		//Plugin_G_LogPrintf( "say;%s;%d;%s;%s\n", Plugin_GetPlayerGUID(slot), slot, Plugin_GetPlayerName(slot), message );
+	}
+	return ret;
+}
+char* G_NickCensor(char *msg,int slot,char **isvulgarism)
 {
 	char token2[1024];
 	char token[1024];
 	badwordsList_t *this;
 	char* ret = msg;
+	int vulg = 0;
 	while(1){
 		msg = Plugin_ParseGetToken(msg);
 		if(msg==NULL)
@@ -339,18 +360,66 @@ char* G_SayCensor(char *msg)
 		censor_ignoreMultiple(token2,token,sizeof(token2));
 
 		for(this = badwords ; this ; this = this->next){
-			if(this->exactmatch){
-				if(!Q_stricmp(token,this->word)){
+                regex_t regex;
+                int reti;
+                char msgbuf[100];
+                const char * pattern = this->word;
+        /* Compile regular expression */
+                reti = regcomp(&regex, pattern, REG_EXTENDED);
+                if( reti ){
+                    //Com_PrintWarning("Could not compile regex %s\n", pattern); 
+                    regfree(&regex);
+                    continue;
+                }
+
+        /* Execute regular expression */
+                reti = regexec(&regex, token, 0, NULL, 0);
+                if( !reti ){
+                    //Com_PrintWarning("Regex match, sensoring"); 
+                    vulg++;
 					memset(msg,'*',size);
-					break;
-				}
-			}else{
-				if(strstr(token2,this->word)!=NULL){
-					memset(msg,'*',size);
-					break;
-				}
-			}
+                }
+                else if( reti == REG_NOMATCH ){
+                      //Com_PrintWarning("No regex match for %s\n", pattern);
+                }
+                else{
+                    regerror(reti, &regex, msgbuf, sizeof(msgbuf));
+                    //Com_PrintWarning(stderr, "Regex match failed: %s\n", msgbuf);
+                }
+
+            regfree(&regex);
 		}
 	}
+	if(vulg > 0)
+	{
+		*isvulgarism = "true";
+	}
 	return ret;
+}
+char *SendDataToAdmins(char *message,int slot)
+{
+	int i;
+	char dvar[128];
+	char *token;
+	char *token2;
+	char msg[256];
+	char buffer[26];
+	snprintf(msg,sizeof(msg),"^1Player^7 %s say vulgarity: ^3%s^7",Plugin_GetPlayerName(slot),message);
+	for(i = 0; i < Plugin_GetSlotCount();i++)
+	{
+		snprintf(dvar,sizeof(dvar),"acp_info_%i",i);
+		if(Plugin_Cvar_VariableString(dvar) == NULL)
+			continue;
+		if(strcmp(Plugin_GetPlayerState(i),"active") == 0)
+		{
+			snprintf(buffer,sizeof(buffer),"%s",Plugin_Cvar_VariableString(dvar));
+			token = strtok(buffer,":");
+			token2 = strtok(NULL,":");
+			if(token2 == NULL)
+				continue;
+			if(atoi(token2) > 40)
+				Plugin_ChatPrintf(i,msg);
+		}
+	}
+	return "";
 }
