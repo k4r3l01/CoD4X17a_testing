@@ -578,6 +578,8 @@ extern cvar_t* sv_minPing;
 extern cvar_t* sv_authorizemode;
 extern cvar_t* sv_privateClients;
 extern cvar_t* sv_privatePassword;
+extern cvar_t* sv_privateAdmins;
+extern cvar_t* sv_adminPassword;
 extern cvar_t* sv_reconnectlimit;
 extern cvar_t* sv_wwwDlDisconnected;
 extern cvar_t* sv_allowDownload;

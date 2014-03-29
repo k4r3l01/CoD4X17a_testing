@@ -489,3 +489,46 @@ P_P_F const char* Plugin_Cvar_GetString(void *cvar)
 
     return var->string;
 }
+
+P_P_F void Plugin_SetPlayerName(unsigned int clientslot, const char* name)
+{
+    client_t *cl;
+    int PID = PHandler_CallerID();
+    if(clientslot > sv_maxclients->integer)
+    {
+        PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
+    }
+    cl = &svs.clients[clientslot];
+	Q_strncpyz(cl->shortname, name, sizeof(cl->shortname));
+	Info_SetValueForKey( cl->userinfo, "name", cl->shortname);
+}
+P_P_F char *Plugin_GetPlayerState(unsigned int clientslot)
+{
+    client_t *cl;
+    int PID = PHandler_CallerID();
+    if(clientslot > sv_maxclients->integer)
+    {
+        PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
+    }
+    cl = &svs.clients[clientslot];
+    if(cl->state == CS_ACTIVE)
+		return "active";
+	else
+		return "null";
+}
+
+P_P_F const char *Plugin_GetPlayerIp(unsigned int clientslot)
+{
+    client_t *cl;
+    int PID = PHandler_CallerID();
+    if(clientslot > sv_maxclients->integer)
+    {
+        PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
+    }
+    cl = &svs.clients[clientslot];
+    if(cl->state == CS_ACTIVE)
+    {
+        return NET_AdrToString(&cl->netchan.remoteAddress);
+    }
+    return "null";
+}

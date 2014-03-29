@@ -321,11 +321,17 @@ A "connect" OOB command has been received
 __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 	char		userinfo[MAX_INFO_STRING];
 	int			reconnectTime;
+	int			a;
 	int			c;
 	int			j;
+	int			k;
 	int			i;
+	int			counts;
+	int			admins;
+	int			vip;
 	client_t		*cl, *newcl;
 	int			count;
+	int			number;
 	char			nick[33];
 	char			ip_str[128];
 	int			clientNum;
@@ -466,11 +472,33 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 
 	//Get new slot for client
 	// check for privateClient password
+	counts = sv_privateClients->integer + sv_privateAdmins->integer;
+	admins = 0;
+	vip	   = 0;
+	for ( k = 0 ; k < sv_maxclients->integer ; k++ )
+	{
+		if ( svs.clients[k].state >= CS_CONNECTED ) {
+			if (svs.clients[k].netchan.remoteAddress.type != NA_BOT) {
+				if(k < sv_privateAdmins->integer)
+					admins++;
+				else if(k >= sv_privateAdmins->integer && k < counts)
+					vip++;
+			}
+		}
+	}	
 	password = Info_ValueForKey( userinfo, "password" );
 	if(!newcl){
-		if ( !strcmp( password, sv_privatePassword->string ) ) {
-			for ( j = 0; j < sv_privateClients->integer ; j++) {
+		if ( !strcmp( password, sv_adminPassword->string ) ) {
+			for ( j = 0; j < sv_privateAdmins->integer ; j++) {
 				cl = &svs.clients[j];
+				if (cl->state == CS_FREE) {
+					newcl = cl;
+					break;
+				}
+			}
+		}else if ( !strcmp( password, sv_privatePassword->string ) || (!strcmp( password, sv_adminPassword->string ) && admins == sv_privateAdmins->integer) ) {
+			for ( a = sv_privateAdmins->integer; a < counts; a++) {
+				cl = &svs.clients[a];
 				if (cl->state == CS_FREE) {
 					newcl = cl;
 					break;
@@ -510,9 +538,9 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 		break;
 	    }
 	}
-
+	number = sv_privateClients->integer + sv_privateAdmins->integer;
 	if(i == 0 && !newcl){
-		for ( j = sv_privateClients->integer; j < sv_maxclients->integer ; j++) {
+		for ( j = number; j < sv_maxclients->integer ; j++) {
 			cl = &svs.clients[j];
 			if (cl->state == CS_FREE) {
 				newcl = cl;
@@ -757,7 +785,8 @@ void SV_UserinfoChanged( client_t *cl ) {
 	char	ip[128];
 	int	i;
 	int	len;
-
+	int slotNum;
+	slotNum = cl - svs.clients;
 	// name for C code
 	Q_strncpyz( cl->name, Info_ValueForKey (cl->userinfo, "name"), sizeof(cl->name) );
 
@@ -842,6 +871,7 @@ void SV_UserinfoChanged( client_t *cl ) {
 	cl->wwwDownload = qfalse;
 	if(Info_ValueForKey(cl->userinfo, "cl_wwwDownload"))
 		cl->wwwDownload = qtrue;
+	PHandler_Event(PLUGINS_USERINFOCHANGE, slotNum);	
 }
 
 
@@ -1202,7 +1232,7 @@ void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 	client->pureAuthentic = 1;
 
 	HL2Rcon_EventClientEnterWorld( clientNum );
-	PHandler_Event(PLUGINS_ONCLIENTENTERWORLD, client);
+	PHandler_Event(PLUGINS_ONCLIENTENTERWORLD, clientNum);
 
 }
 

@@ -60,7 +60,8 @@ char PHandler_Events[PLUGINS_ITEMCOUNT][32]={
     "OnSpawnServer",
     "OnPreFastRestart",
     "OnPostFastRestart",
-    "OnPlayerConnectAuthFail"
+    "OnPlayerConnectAuthFail",
+	"OnClientInfoChange"
 
 };
 

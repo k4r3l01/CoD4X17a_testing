@@ -30,6 +30,7 @@
 
 
 	//Types and structs
+typedef int scr_entref_t;
 typedef int	fileHandle_t;
 typedef enum {qfalse, qtrue}	qboolean;
 typedef void (*xcommand_t)();

@@ -47,6 +47,7 @@ typedef void convariable_t; //For plugins
 #include "sys_net.h"    // netadr
 #include "msg.h"        // msg_t
 #include "g_shared.h"   // level
+#include "g_sv_shared.h" // G_LogPrintf
 #include "qcommon_io.h" // Com_Printf
 #include "server.h"     // client_t
 #include "sys_net.h"    // Tcp stuff
@@ -55,7 +56,7 @@ typedef void convariable_t; //For plugins
 #include "../plugins/plugin_declarations.h"
 #include "plugin_events.h"
 
-#define PLUGIN_MAX_MALLOCS 50
+#define PLUGIN_MAX_MALLOCS 150
 #define PLUGIN_MAX_SOCKETS 4
 
 // plugins com

@@ -168,3 +168,7 @@
     __cdecl short Plugin_Scr_ExecThread( int callbackHook, unsigned int numArgs);
     __cdecl void  Plugin_Scr_FreeThread( short threadId);
 
+//custom
+	__cdecl void Plugin_SetPlayerName(unsigned int clientslot, const char* name);
+	__cdecl char* Plugin_GetPlayerState(unsigned int clientslot);
+    __cdecl const char* Plugin_GetPlayerIp(unsigned int clientslot);

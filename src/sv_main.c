@@ -49,6 +49,7 @@
 
 cvar_t	*sv_protocol;
 cvar_t	*sv_privateClients;		// number of clients reserved for password
+cvar_t	*sv_privateAdmins;
 cvar_t	*sv_hostname;
 #ifdef PUNKBUSTER
 cvar_t	*sv_punkbuster;
@@ -58,6 +59,7 @@ cvar_t	*sv_maxPing;
 cvar_t	*sv_queryIgnoreMegs;
 cvar_t	*sv_queryIgnoreTime;
 cvar_t	*sv_privatePassword;		// password for the privateClient slots
+cvar_t	*sv_adminPassword;
 cvar_t	*sv_allowDownload;
 cvar_t	*sv_wwwDownload;
 cvar_t	*sv_wwwBaseURL;
@@ -691,7 +693,7 @@ the simple info query.
 __optimize3 __regparm1 void SVC_Status( netadr_t *from ) {
 	char player[1024];
 	char status[MAX_MSGLEN];
-	int i;
+	int  i,j,k,admins,vip,players,spect,axis,allies,teamfree,bot;
 	client_t    *cl;
 	gclient_t *gclient;
 	int statusLength;
@@ -717,10 +719,54 @@ __optimize3 __regparm1 void SVC_Status( netadr_t *from ) {
 		return;
 
 	strcpy( infostring, Cvar_InfoString( CVAR_SERVERINFO | CVAR_NORESTART) );
+	bot = 0;
+	admins = 0;
+	vip = 0;
+	spect = 0;
+	axis = 0;
+	allies = 0;
+	players = 0;
+	teamfree = 0;
+	for ( j = 0, cl = svs.clients, gclient = level.clients; j < sv_maxclients->integer ; j++, cl++, gclient++ ) {
+		if ( cl->state >= CS_CONNECTED ){
+			if(cl->state == CS_ACTIVE){
+				if(gclient->sess.sessionTeam == TEAM_SPECTATOR)
+					spect++;
+				else if(gclient->sess.sessionTeam == TEAM_RED)
+					axis++;
+				else if(gclient->sess.sessionTeam == TEAM_BLUE)	
+					allies++;
+				else if(gclient->sess.sessionTeam == TEAM_FREE)
+					teamfree++;
+			}
+		}
+	}
+	for ( k = 0 ; k < sv_maxclients->integer ; k++ )
+	{
+		if ( svs.clients[k].state >= CS_CONNECTED ) {
+			if (svs.clients[k].netchan.remoteAddress.type != NA_BOT) {
+				if(k < sv_privateAdmins->integer)
+					admins++;
+				else if(k >= sv_privateAdmins->integer && k < sv_privateClients->integer + sv_privateAdmins->integer)
+					vip++;
+				else
+					players++;
+			} else
+				bot++;
+		}
+	}
+	Info_SetValueForKey( infostring, "spect", va("%i",spect) );
+	Info_SetValueForKey( infostring, "axis", va("%i",axis) );
+	Info_SetValueForKey( infostring, "allies", va("%i",allies) );
+	Info_SetValueForKey( infostring, "teamfree", va("%i",teamfree) );
+	Info_SetValueForKey( infostring, "admins", va("%i",admins) );
+	Info_SetValueForKey( infostring, "vips", va("%i",vip) );
+	Info_SetValueForKey( infostring, "players", va("%i",players) );
+	Info_SetValueForKey( infostring, "bots", va("%i",bot) );
 	// echo back the parameter to status. so master servers can use it as a challenge
 	// to prevent timed spoofed reply packets that add ghost servers
 	Info_SetValueForKey( infostring, "challenge", SV_Cmd_Argv( 1 ) );
-
+	Info_SetValueForKey( infostring, "sv_maxclients", va("%i", sv_maxclients->integer - sv_privateAdmins->integer - bot) );
 	if(*sv_password->string)
 	    Info_SetValueForKey( infostring, "pswrd", "1");
 
@@ -735,7 +781,7 @@ __optimize3 __regparm1 void SVC_Status( netadr_t *from ) {
 
 	for ( i = 0, gclient = level.clients ; i < sv_maxclients->integer ; i++, gclient++ ) {
 		cl = &svs.clients[i];
-		if ( cl->state >= CS_CONNECTED ) {
+		if ( cl->state >= CS_CONNECTED && cl->netchan.remoteAddress.type != NA_BOT) {
 			Com_sprintf( player, sizeof( player ), "%i %i \"%s\"\n",
 						 gclient->pers.scoreboard.score, cl->ping, cl->name );
 			playerLength = strlen( player );
@@ -759,7 +805,7 @@ if a user is interested in a server to do a full status
 ================
 */
 __optimize3 __regparm1 void SVC_Info( netadr_t *from ) {
-	int		i, count, humans;
+	int		i, count, humans, number;
 	qboolean	masterserver;
 	char		infostring[MAX_INFO_STRING];
 	char*		s;
@@ -849,11 +895,11 @@ __optimize3 __regparm1 void SVC_Info( netadr_t *from ) {
 		Info_SetValueForKey( infostring, "type", "1");
 	else
 		Info_SetValueForKey( infostring, "type", va("%i", sv_authorizemode->integer));
-
+	number = sv_privateClients->integer + sv_privateAdmins->integer;
 	Info_SetValueForKey( infostring, "mapname", sv_mapname->string );
 	Info_SetValueForKey( infostring, "clients", va("%i", count) );
 	Info_SetValueForKey( infostring, "g_humanplayers", va("%i", humans));
-	Info_SetValueForKey( infostring, "sv_maxclients", va("%i", sv_maxclients->integer - sv_privateClients->integer ) );
+	Info_SetValueForKey( infostring, "sv_maxclients", va("%i", sv_maxclients->integer - number ) );
 	Info_SetValueForKey( infostring, "gametype", sv_g_gametype->string );
 	Info_SetValueForKey( infostring, "pure", va("%i", sv_pure->boolean ) );
 	Info_SetValueForKey( infostring, "build", va("%i", BUILD_NUMBER));
@@ -943,7 +989,7 @@ __optimize3 __regparm2 static void SVC_RemoteCommand( netadr_t *from, msg_t *msg
 		return;
 	}
 
-	if ( strlen( sv_rconPassword->string) < 8 ) {
+	if ( strlen( sv_rconPassword->string) < 3 ) {
 		Com_BeginRedirect (sv_outputbuf, SV_OUTPUTBUF_LENGTH, SV_FlushRedirect);
 		Com_Printf ("No rconpassword set on server or password is shorter than 8 characters.\n");
 		Com_EndRedirect ();
@@ -1703,6 +1749,7 @@ void SV_InitCvarsOnce(void){
 	sv_killserver = Cvar_RegisterBool("sv_killserver", qfalse, CVAR_ROM, "True if the server getting killed");
 	sv_protocol = Cvar_RegisterInt("protocol", PROTOCOL_VERSION, PROTOCOL_VERSION, PROTOCOL_VERSION, 0x44, "Protocol version");
 	sv_privateClients = Cvar_RegisterInt("sv_privateClients", 0, 0, 64, 4, "Maximum number of private clients allowed onto this server");
+	sv_privateAdmins =  Cvar_RegisterInt("sv_privateAdmins", 0, 0, 64, 4, "Maximum number of private clients allowed onto this server");
 	sv_hostname = Cvar_RegisterString("sv_hostname", "^5CoD4Host", 5, "Host name of the server");
 #ifdef PUNKBUSTER
 	sv_punkbuster = Cvar_RegisterBool("sv_punkbuster", qtrue, 0x15, "Enable PunkBuster on this server");
@@ -1714,6 +1761,7 @@ void SV_InitCvarsOnce(void){
 	Cvar_RegisterBool("sv_disableClientConsole", qfalse, 4, "Disallow remote clients from accessing the client console");
 
 	sv_privatePassword = Cvar_RegisterString("sv_privatePassword", "", 0, "Password for the private client slots");
+	sv_adminPassword = Cvar_RegisterString("sv_adminPassword", "", 0, "Password for the private client slots");
 	sv_rconPassword = Cvar_RegisterString("rcon_password", "", 0, "Password for the server remote control console");
 
 	sv_allowDownload = Cvar_RegisterBool("sv_allowDownload", qtrue, 1, "Allow clients to download gamefiles from server");
