@@ -40,6 +40,8 @@
 #define NV_ProcessBegin NV_LoadConfig
 #define NV_ProcessEnd NV_WriteConfig
 
+static int nvEntered;
+
 /*
 ================
 NV_ParseConfigLine
@@ -75,16 +77,13 @@ qboolean NV_ParseConfigLine(char* line, int linenumber){
         return qtrue;
 
     }else if(!Q_stricmp(Info_ValueForKey(line, "type") , "admin")){
-	Com_Printf("^1WARNING: ^7GUID based admin authorization has been disabled. Go to https://guidError.iceops.in/ for details.\n");
-	return qfalse;
-	/*
+
         if(!SV_RemoteCmdInfoAddAdmin( line ))
         {
             Com_Printf("Error at line: %d\n", linenumber);
             return qfalse;
         }
         return qtrue;
-        */
 
     }else{
         Com_Printf("Error: unknown type (line: %d)\n", linenumber);
@@ -107,6 +106,11 @@ void NV_LoadConfig(){
     *buf = 0;
     fileHandle_t file;
 
+    if( nvEntered == qtrue ){
+        return;
+    }
+    nvEntered = qtrue;
+
     SV_RemoteCmdClearAdminList();
     HL2Rcon_ClearSourceRconAdminList();
     Auth_ClearAdminList();
@@ -114,6 +118,7 @@ void NV_LoadConfig(){
     FS_SV_FOpenFileRead("nvconfig.dat", &file);
     if(!file){
         Com_DPrintf("Couldn't open nvconfig.dat for reading\n");
+        nvEntered = qfalse;
         return;
     }
     Com_Printf( "loading nvconfig.dat\n");
@@ -125,11 +130,13 @@ void NV_LoadConfig(){
         if(read == 0){
             FS_FCloseFile(file);
             Com_Printf("Loaded nvconfig.dat %i errors\n", error);
+            nvEntered = qfalse;
             return;
         }
         if(read == -1){
             Com_Printf("Can not read from nvconfig.dat\n");
             FS_FCloseFile(file);
+            nvEntered = qfalse;
             return;
         }
         i++;//linecouter
@@ -152,6 +159,10 @@ NV_WriteConfig
 void NV_WriteConfig(){
 
     char* buffer;
+
+    if( nvEntered == qtrue ){
+        return;
+    }
 
     buffer = Hunk_AllocateTempMemory(MAX_NVCONFIG_SIZE);
     if(!buffer){

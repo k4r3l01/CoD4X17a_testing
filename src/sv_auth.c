@@ -77,21 +77,9 @@ int Auth_Authorize(const char *login, const char *password){
     if(Q_strncmp(user->sha256, sha256, 128))
 	return -1;
 
-    Com_Printf("Admin Authorized! UID: %d, name: %s, power: %d\n", user->uid, user->username,user->power);
     return id;
 }
 
-int Auth_GetPower(int uid){
-    int i;
-    authData_admin_t *user;
-    int power = AUTH_DEFAULT_POWER; // 1
-    
-    for(i = 0, user = auth_admins.admins; i < MAX_AUTH_ADMINS; i++, user++){
-	if(*user->username && user->uid == uid)
-	    power = user->power;
-    }
-    return power;
-}
 
 int Auth_GetUID(char *name){
     int i;
@@ -117,28 +105,34 @@ void Auth_SetAdmin_f( void ){
 	int power, i,uid;
 	authData_admin_t* user;
 	authData_admin_t* free = NULL;
+	mvabuf;
 
 
 	if(Cmd_Argc() != 4){
-		Com_Printf("Usage: %s <username, password, power>\n",Cmd_Argv(0));
+		Com_Printf("Usage: %s <username> <password> <power>\n", Cmd_Argv(0));
+		Com_Printf( "Where username is loginname for this user\n" );
+		Com_Printf( "Where password is the initial 6 characters long or longer password for this user which should get changed by the user on first login\n" );		
+		Com_Printf( "Where power is one of the following: Any number between 1 and 100\n" );
 		return;
 	}
 
 	username = Cmd_Argv(1);
 	password = Cmd_Argv(2);
 	power = atoi(Cmd_Argv(3));
-	uid = auth_admins.maxUID + 1;
-	while(Auth_GetPower(uid)>1)
-	    ++uid; // Just in case it is already registered (shouldn't happen anyway)
-	    
-	auth_admins.maxUID++;
+	
 	if(!username || !*username || !password || strlen(password) < 6 || power < 1 || power > 100){
-		Com_Printf("Usage: %s <username, password (at least 6 characters), power (and integer between 1 and 100)>\n",Cmd_Argv(0));
+		Com_Printf("Usage: %s <username> <password> <power>\n", Cmd_Argv(0));
+		Com_Printf( "Where username is loginname for this user\n" );
+		Com_Printf( "Where password is the initial 6 characters long or longer password for this user which should get changed by the user on first login\n" );		
+		Com_Printf( "Where power is one of the following: Any number between 1 and 100\n" );
 		return;
 	}
 
 	NV_ProcessBegin();
-
+	
+	uid = ++auth_admins.maxUID;
+	    
+		
 	for(i = 0, user = auth_admins.admins; i < MAX_AUTH_ADMINS; i++, user++){
 
 		if(!Q_stricmp(user->username, username)){
@@ -183,11 +177,16 @@ void Auth_SetAdmin_f( void ){
 	sha256 = Com_SHA256(va("%s.%s", password, salt));
 
 	Q_strncpyz(free->username, username, sizeof(free->username));
+	
+	Com_Printf("Debug: 1:%s 2:%s\n", username, free->username);
+	
 	Q_strncpyz(free->sha256, sha256, sizeof(free->sha256));
 	Q_strncpyz(free->salt, (char*)salt, sizeof(free->salt));
-	free->power = power;
+	//free->power = power; Instead:
+	SV_RemoteCmdSetAdmin(uid, NULL, power);
+	
 	free->uid = uid;
-
+	Com_Printf("Registered user with Name: %s Power: %d UID: %d\n", free->username, power, uid);
 	NV_ProcessEnd();
 }
 
@@ -228,7 +227,7 @@ void Auth_ListAdmins_f( void ){
 	Com_Printf("------- Admins: -------\n");
 	for(i = 0, user = auth_admins.admins; i < MAX_AUTH_ADMINS; i++, user++){
 		if(*user->username)
-			Com_Printf("  %2d:   Name: %s, Power: %d, UID: @%d\n", i+1, user->username, user->power,user->uid);
+			Com_Printf("  %2d:   Name: %s, Power: %d, UID: @%d\n", i+1, user->username, SV_RemoteCmdGetClPowerByUID( user->uid ), user->uid);
 	}
 	Com_Printf("---------------------------------\n");
 }
@@ -243,6 +242,8 @@ void Auth_ChangeAdminPassword( int uid,const char* oldPassword,const char* passw
 	authData_admin_t *user, *user2;
 	int i;
 	//int uid = -1;
+	mvabuf;
+
 	
 	if(!password || strlen(password) < 6){
 		Com_Printf("Error: the new password must have at least 6 characters\n");
@@ -326,7 +327,7 @@ qboolean Auth_AddAdminToList(const char* username, const char* password, const c
 	authData_admin_t* free = NULL;
 	int i;
 
-	if(!username || !*username || !password || strlen(password) < 6 || power < 1 || power > 100 || !salt || strlen(salt) != 64)
+	if(!username || !*username || !password || strlen(password) < 6 /* || power < 1 || power > 100 Nope! */ || !salt || strlen(salt) != 64)
 		return qfalse;
 
 	for(i = 0, user = auth_admins.admins; i < MAX_AUTH_ADMINS; i++, user++){
@@ -346,10 +347,14 @@ qboolean Auth_AddAdminToList(const char* username, const char* password, const c
 	Q_strncpyz(free->username, username, sizeof(free->username));
 	Q_strncpyz(free->sha256, password, sizeof(free->sha256));
 	Q_strncpyz(free->salt, salt, sizeof(free->salt));
-	free->power = power;
 	free->uid = uid;
 	if(uid > auth_admins.maxUID)
 	    auth_admins.maxUID = uid;
+	
+	if(power < 1 || power > 100)
+		return qtrue;
+	/* power was found! add him (backward compatibility) */
+	SV_RemoteCmdSetAdmin(uid, NULL, power);
 	return qtrue;
 }
 
@@ -378,9 +383,11 @@ void Auth_Login_f(){
 	SV_DropClient(invoker,"Incorrect login credentials.\n");
 	return;
     }
+
     invoker->uid = auth_admins.admins[id].uid;
-    invoker->power = auth_admins.admins[id].power;
-    Com_Printf("^2Successfully authorized.\n");
+    invoker->power = SV_RemoteCmdGetClPower(invoker);
+    Com_Printf("^2Successfully authorized. UID: %d, name: %s, power: %d\n",
+			   auth_admins.admins[id].uid, auth_admins.admins[id].username, invoker->power);
 }
 
 
@@ -409,7 +416,9 @@ void Auth_WriteAdminConfig(char* buffer, int size)
     char infostring[MAX_INFO_STRING];
     int i;
     authData_admin_t *admin;
+	mvabuf;
 
+	
     Q_strcat(buffer, size, "\n//Admins authorization data\n");
 
     for ( admin = auth_admins.admins, i = 0; i < MAX_AUTH_ADMINS ; admin++, i++ ){
@@ -420,7 +429,7 @@ void Auth_WriteAdminConfig(char* buffer, int size)
 		continue;
 
         Info_SetValueForKey(infostring, "type", "authAdmin");
-        Info_SetValueForKey(infostring, "power", va("%i", admin->power));
+//        Info_SetValueForKey(infostring, "power", va("%i", admin->power)); We don't write it anymore. It goes now to "admin"
         Info_SetValueForKey(infostring, "uid", va("%i", admin->uid));
         Info_SetValueForKey(infostring, "password", admin->sha256);
         Info_SetValueForKey(infostring, "salt", admin->salt);

@@ -262,6 +262,7 @@ P_P_F void Plugin_SetPlayerUID(unsigned int clientslot, unsigned int uid)
 {
     client_t *cl;
     int PID = PHandler_CallerID();
+	mvabuf;
 
     if(clientslot > sv_maxclients->integer)
     {
@@ -275,7 +276,9 @@ P_P_F unsigned int Plugin_GetPlayerUID(unsigned int clientslot)
 {
     client_t *cl;
     int PID = PHandler_CallerID();
+	mvabuf;
 
+	
     if(clientslot > sv_maxclients->integer)
     {
         PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get UID for bad client: %d\n", clientslot));
@@ -288,6 +291,8 @@ P_P_F const char* Plugin_GetPlayerGUID(unsigned int clientslot)
 {
     client_t *cl;
     int PID = PHandler_CallerID();
+	mvabuf;
+	
     if(clientslot > sv_maxclients->integer)
     {
         PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
@@ -300,6 +305,8 @@ P_P_F void Plugin_SetPlayerGUID(unsigned int clientslot, const char* guid)
 {
     client_t *cl;
     int PID = PHandler_CallerID();
+	mvabuf;
+
     if(clientslot > sv_maxclients->integer)
     {
         PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
@@ -312,6 +319,8 @@ P_P_F void Plugin_SetPlayerNoPB(unsigned int clientslot)
 {
 #ifdef PUNKBUSTER
     client_t *cl;
+	mvabuf;
+	
     int PID = PHandler_CallerID();
     if(clientslot > sv_maxclients->integer)
     {
@@ -490,45 +499,84 @@ P_P_F const char* Plugin_Cvar_GetString(void *cvar)
     return var->string;
 }
 
-P_P_F void Plugin_SetPlayerName(unsigned int clientslot, const char* name)
+P_P_F void Plugin_DropClient( unsigned int clientnum, const char *reason )
 {
-    client_t *cl;
-    int PID = PHandler_CallerID();
-    if(clientslot > sv_maxclients->integer)
-    {
-        PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
-    }
-    cl = &svs.clients[clientslot];
-	Q_strncpyz(cl->shortname, name, sizeof(cl->shortname));
-	Info_SetValueForKey( cl->userinfo, "name", cl->shortname);
-}
-P_P_F char *Plugin_GetPlayerState(unsigned int clientslot)
-{
-    client_t *cl;
-    int PID = PHandler_CallerID();
-    if(clientslot > sv_maxclients->integer)
-    {
-        PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
-    }
-    cl = &svs.clients[clientslot];
-    if(cl->state == CS_ACTIVE)
-		return "active";
-	else
-		return "null";
+    if(clientnum > sv_maxclients->integer)
+		return;
+
+	SV_DropClient(&svs.clients[clientnum], reason);
 }
 
-P_P_F const char *Plugin_GetPlayerIp(unsigned int clientslot)
+
+
+P_P_F void Plugin_BanClient( unsigned int clientnum, int duration, int invokerid, char *banreason )
 {
-    client_t *cl;
-    int PID = PHandler_CallerID();
-    if(clientslot > sv_maxclients->integer)
-    {
-        PHandler_Error(PID,P_ERROR_DISABLE, va("Plugin tried to get GUID for bad client: %d\n", clientslot));
-    }
-    cl = &svs.clients[clientslot];
-    if(cl->state == CS_ACTIVE)
-    {
-        return NET_AdrToString(&cl->netchan.remoteAddress);
-    }
-    return "null";
+    
+	client_t *cl;
+	char* guid;
+	time_t expire;
+	char* temp;
+    time_t aclock;
+	char endtime[32];
+    char dropmsg[MAX_STRING_CHARS];
+
+	if(clientnum > sv_maxclients->integer)
+		return;
+	
+	cl = &svs.clients[clientnum];
+
+	time(&aclock);
+	
+	if(duration == -1)
+	{
+		expire = duration;
+		Q_strncpyz(endtime, "never", sizeof(endtime));
+	}
+	else
+	{
+		expire = (aclock+(time_t)(duration*60));
+		temp = ctime(&expire);
+		temp[strlen(temp)-1] = 0;
+		Q_strncpyz(endtime, temp, sizeof(endtime));
+	
+	}
+	
+	if(strlen(cl->pbguid) == 32)
+	{
+		guid = &cl->pbguid[24];
+	}
+	else if(cl->uid < 1)
+	{
+		Com_Printf("Error: This player has no valid ID and got banned by IP only\n");
+		SV_DropClient(cl, "Invalid ID\n");
+		SV_PlayerAddBanByip(&cl->netchan.remoteAddress, "INVALID USER", 0, "INVALID", 0, expire);
+		return;
+	}
+	
+	if(banreason == NULL)
+	{
+		banreason = "N/A";
+	}
+	
+	SV_AddBan(cl->uid, invokerid, guid, cl->name, expire, banreason);
+
+	if( cl->uid > 0 )
+	{
+		Com_Printf( "Banrecord added for player: %s uid: %i\n", cl->name, cl->uid);
+		SV_PrintAdministrativeLog( "Banned player: %s uid: %i until %s with the following reason: %s", cl->name, cl->uid, endtime, banreason);
+		Com_sprintf(dropmsg, sizeof(dropmsg), "You have got a ban onto this gameserver\nYour ban will expire on: %s\nYour UID is: %i    Banning admin UID is: %i\nReason for this ban:\n%s",
+			endtime, cl->uid, invokerid, banreason);
+
+	}else{
+		Com_Printf( "Banrecord added for player: %s guid: %s\n", cl->name, cl->pbguid);
+		SV_PrintAdministrativeLog( "Banned player: %s guid: %s until %s with the following reason: %s", cl->name, cl->pbguid, endtime, banreason);
+		Com_sprintf(dropmsg, sizeof(dropmsg), "You have got a ban onto this gameserver\nYour ban will expire on: %s\nYour GUID is: %s    Banning admin UID is: %i\nReason for this ban:\n%s",
+			endtime, cl->pbguid, invokerid, banreason);
+
+		if(cl->authentication < 1)
+		{
+			SV_PlayerAddBanByip(&cl->netchan.remoteAddress, banreason, 0, cl->pbguid, 0, expire);
+		}
+	}
+	SV_DropClient(cl, dropmsg);
 }

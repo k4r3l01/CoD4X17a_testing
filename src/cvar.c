@@ -1575,6 +1575,7 @@ Toggles a cvar for easy single key binding
 */
 void Cvar_Toggle_f( void ) {
 	int		v;
+	mvabuf;
 
 	if ( Cmd_Argc() != 2 ) {
 		Com_Printf ("usage: toggle <variable>\n");
@@ -1915,7 +1916,7 @@ void Cvar_Restart_f( void ) {
 			}
 			// clear the var completely, since we
 			// can't remove the index from the list
-			Com_Memset( var, 0, sizeof( var ) );
+			Com_Memset( var, 0, sizeof( cvar_t ) );
 			continue;
 		}
 

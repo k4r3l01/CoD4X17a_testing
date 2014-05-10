@@ -242,7 +242,7 @@ typedef struct{
 	int			connectionId;
 	int			serviceId;
 	tcpclientstate_t	state;
-	SOCKET			sock;
+	//SOCKET			sock;
 }tcpConnections_t;
 
 
@@ -802,7 +802,7 @@ __optimize3 __regparm3 int NET_GetPacket(netadr_t *net_from, void *net_message, 
 			err = socketError;
 
 			if( err != EAGAIN && err != ECONNRESET ){
-				Com_PrintWarningNoRedirect( "NET_GetPacket on (%s): %s\n", NET_AdrToString(NET_SockToAdr(socket)), NET_ErrorString() );
+				Com_PrintWarningNoRedirect( "NET_GetPacket on (%s - %d): %s\n", NET_AdrToString(NET_SockToAdr(socket)), socket , NET_ErrorString() );
 			}
 		}
 		else
@@ -884,6 +884,20 @@ qboolean Sys_SendPacket( int length, const void *data, netadr_t *to ) {
 			ret = sendto( to->sock, data, length, 0, (struct sockaddr *) &addr, sizeof(struct sockaddr_in) );
 		else if(addr.ss_family == AF_INET6)
 			ret = sendto( to->sock, data, length, 0, (struct sockaddr *) &addr, sizeof(struct sockaddr_in6) );
+		
+#ifdef SOCKET_DEBUG
+			int err2;
+			
+			if(ret == SOCKET_ERROR)
+			{
+				err2 = socketError;
+				if(err2 != EAGAIN)
+				{
+					Com_PrintError( "Sys_SendPacket: socket %d failed with: %s\n", to->sock,  NET_ErrorString() );
+				}
+			}
+#endif
+		
 	}else{//Send this packet to any available socket
 
 		for(i = 0; i < numIP; i++)
@@ -895,6 +909,22 @@ qboolean Sys_SendPacket( int length, const void *data, netadr_t *to ) {
 				ret = sendto( ip_socket[i].sock, data, length, 0, (struct sockaddr *) &addr, sizeof(struct sockaddr_in) );
 			else if(addr.ss_family == AF_INET6 && ip_socket[i].type == NA_IP6)
 				ret = sendto( ip_socket[i].sock, data, length, 0, (struct sockaddr *) &addr, sizeof(struct sockaddr_in6) );
+			
+#ifdef SOCKET_DEBUG
+			int err2;
+			
+			if(ret == SOCKET_ERROR)
+			{
+				err2 = socketError;
+				if(err2 != EAGAIN)
+				{
+					Com_PrintError( "Sys_SendPacket: socket %d failed with: %s\n", ip_socket[i].sock,  NET_ErrorString() );
+				
+				}
+			}
+#endif
+			
+			
 		}
 	}
 
@@ -911,8 +941,9 @@ qboolean Sys_SendPacket( int length, const void *data, netadr_t *to ) {
 		if( ( err == EADDRNOTAVAIL ) && ( ( to->type == NA_BROADCAST ) ) ) {
 			return qfalse;
 		}
-
+#ifndef SOCKET_DEBUG
 		Com_PrintWarningNoRedirect( "NET_SendPacket: %s\n", NET_ErrorString() );
+#endif
 		return qfalse;
 	}
 	return qtrue;
@@ -1118,7 +1149,28 @@ int NET_IPSocket( char *net_interface, int port, int *err, qboolean tcp) {
 			return INVALID_SOCKET;
 		}
 	}
+#ifdef SOCKET_DEBUG
+	if(!tcp)
+	{
+		char dummybuf[32];
+		int ret;
+		int err2;
+				
+		ret = recv(newsocket, dummybuf, sizeof(dummybuf), 0);
+		
+		err2 = socketError;
 
+		
+		if(ret == SOCKET_ERROR && err2 != EAGAIN)
+		{
+			Com_PrintError( "NET_IPSocket reading from open socket %d failed with: %s\n", newsocket,  NET_ErrorString() );
+		}else {
+			Com_Printf( "NET_IPSocket opening of socket %d was successful\n", newsocket );
+			
+		}
+	}
+#endif
+	
 	return newsocket;
 }
 
@@ -1227,7 +1279,27 @@ int NET_IP6Socket( char *net_interface, int port, struct sockaddr_in6 *bindto, i
 			return INVALID_SOCKET;
 		}
 	}
-
+#ifdef SOCKET_DEBUG
+	if(!tcp)
+	{
+		char dummybuf[32];
+		int ret;
+		int err2;
+		
+		ret = recv(newsocket, dummybuf, sizeof(dummybuf), 0);
+		
+		err2 = socketError;
+		
+		
+		if(ret == SOCKET_ERROR && err2 != EAGAIN)
+		{
+			Com_PrintError( "NET_IP6Socket reading from open socket %d failed with: %s\n", newsocket,  NET_ErrorString() );
+		}else {
+			Com_Printf( "NET_IP6Socket opening of socket %d was successful\n", newsocket );
+			
+		}
+	}
+#endif
 	return newsocket;
 }
 
@@ -2026,10 +2098,10 @@ void NET_Config( qboolean enableNetworking ) {
 
 		for(i = 0, con = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, con++){
 
-			if(con->lastMsgTime > 0 && con->sock != INVALID_SOCKET)
+			if(con->lastMsgTime > 0 && con->remote.sock != INVALID_SOCKET)
 			{
-				Com_Printf("Close TCP serversocket: %d\n", con->sock);
-				NET_TcpCloseSocket(con->sock);
+				Com_Printf("Close TCP serversocket: %d\n", con->remote.sock);
+				NET_TcpCloseSocket(con->remote.sock);
 			}
 		}
 
@@ -2105,7 +2177,7 @@ void NET_RegisterDefaultCommunicationSocket(netadr_t *adr){
 
 
 	if(socketadr != NULL && socketadr->type == NA_IP){
-		
+		/* Ignore localhost */
 		NET_StringToAdr("127.0.0.1", &test, NA_IP);
 
 		if(NET_CompareBaseAdr(socketadr, &test))
@@ -2158,18 +2230,18 @@ void NET_TcpCloseSocket(int socket)
 	//See if this was a serversocket and clear all references to it
 	for(i = 0, conn = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, conn++)
 	{
-		if(conn->sock == socket)
+		if(conn->remote.sock == socket)
 		{
 			conn->lastMsgTime = 0;
-			FD_CLR(conn->sock, &tcpServer.fdr);
+			FD_CLR(conn->remote.sock, &tcpServer.fdr);
 			conn->state = 0;
 
 			if(conn->state >= TCP_AUTHSUCCESSFULL)
 			{
 				tcpServer.activeConnectionCount--;
-				NET_TCPConnectionClosed(&conn->remote, conn->sock, conn->connectionId, conn->serviceId);
+				NET_TCPConnectionClosed(&conn->remote, conn->remote.sock, conn->connectionId, conn->serviceId);
 			}
-			conn->sock = INVALID_SOCKET;
+			conn->remote.sock = INVALID_SOCKET;
 			NET_TcpServerRebuildFDList();
 			return;
 		}
@@ -2186,38 +2258,30 @@ Return -1 if an fatal error happened on this socket otherwise 0
 
 int NET_TcpSendData( int sock, const void *data, int length ) {
 
-	int state, err;
+	int state, err, numbytes;
+	
+	numbytes = length;
 
 	if(sock < 1)
 		return -1;
 
-	do
-	{
-		state = send( sock, data, length, NET_NOSIGNAL); // FIX: flag NOSIGNAL prevents SIGPIPE in case of connection problems
+	state = send( sock, data, numbytes, NET_NOSIGNAL); // FIX: flag NOSIGNAL prevents SIGPIPE in case of connection problems
 
-		if(state == SOCKET_ERROR)
-		{
+	if(state == SOCKET_ERROR)
+	{
 			err = SOCKET_ERROR;
 
 			if( err == EAGAIN )
 			{
-				Com_PrintNoRedirect("NET_TcpSendData: Command overflow\n");
+				return 0; 
 			}else{
 				Com_PrintWarningNoRedirect ("NET_SendTCPPacket: Couldn't send data to remote host: %s\n", NET_ErrorString());
 			}
 			NET_TcpCloseSocket(sock);
 			return -1;
-		}
+	}
 
-		length -= state;
-		data += state;
-
-		if(state == 0)
-			return 0;
-
-	}while( length > 0);
-
-	return 0;
+	return state;
 }
 
 /*========================================================================================================
@@ -2239,7 +2303,7 @@ int NET_TcpServerGetPacket(tcpConnections_t *conn, void *netmsg, int maxsize, qb
 	int ret;
 
 
-	ret = recv(conn->sock, netmsg, maxsize , 0);
+	ret = recv(conn->remote.sock, netmsg, maxsize , 0);
 
 	if(ret == SOCKET_ERROR){
 
@@ -2260,7 +2324,7 @@ int NET_TcpServerGetPacket(tcpConnections_t *conn, void *netmsg, int maxsize, qb
 		}else
 			Com_PrintWarningNoRedirect("NET_GetTcpPacket recv() syscall failed: %s\n", NET_ErrorString()); // BUGFIX: this causes SIGSEGV in case of an error during console stream
 
-		NET_TcpCloseSocket(conn->sock);
+		NET_TcpCloseSocket(conn->remote.sock);
 		return -1;
 
 	}else if(ret == 0){
@@ -2269,7 +2333,7 @@ int NET_TcpServerGetPacket(tcpConnections_t *conn, void *netmsg, int maxsize, qb
 		{
 			Com_PrintNoRedirect("Connection closed by client: %s\n", NET_AdrToString(&conn->remote));
 		}
-		NET_TcpCloseSocket(conn->sock);
+		NET_TcpCloseSocket(conn->remote.sock);
 		return -1;
 
 	}else{
@@ -2290,12 +2354,12 @@ void NET_TcpServerRebuildFDList()
 	
 	for(i = 0, conn = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, conn++)
 	{
-		if(conn->sock != INVALID_SOCKET)
+		if(conn->remote.sock > 0)
 		{
-			FD_SET(conn->sock, &tcpServer.fdr);
-			if(conn->sock > tcpServer.highestfd)
+			FD_SET(conn->remote.sock, &tcpServer.fdr);
+			if(conn->remote.sock > tcpServer.highestfd)
 			{
-				tcpServer.highestfd = conn->sock;
+				tcpServer.highestfd = conn->remote.sock;
 			}
 		}
 	}
@@ -2312,7 +2376,7 @@ void NET_TcpServerInit()
 		
 	for(i = 0, conn = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, conn++)
 	{
-		conn->sock = INVALID_SOCKET;
+		conn->remote.sock = INVALID_SOCKET;
 	}
 }
 
@@ -2325,7 +2389,8 @@ Get new packets received on serversockets and call executing functions
 */
 
 
-void NET_TcpServerPacketEventLoop(){
+void NET_TcpServerPacketEventLoop()
+{
 
 	struct timeval timeout;
 	timeout.tv_sec = 0;
@@ -2343,47 +2408,49 @@ void NET_TcpServerPacketEventLoop(){
 		return;
 	}
 
-	while(qtrue){
+	fdr = tcpServer.fdr;
+	activefd = select(tcpServer.highestfd + 1, &fdr, &fdr, NULL, &timeout);
 
-		fdr = tcpServer.fdr;
-		activefd = select(tcpServer.highestfd + 1, &fdr, NULL, NULL, &timeout);
 
-		if(activefd < 0)
+	if(activefd < 0)
+	{
+		Com_PrintWarningNoRedirect("NET_TcpServerPacketEventLoop: select() syscall failed: %s\n", NET_ErrorString());
+		return;
+	}
+
+	if(activefd == 0)
+	{
+		return;
+	}
+	
+	for(i = 0, conn = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, conn++)
+	{
+		if(conn->remote.sock < 1)
 		{
-			Com_PrintWarningNoRedirect("NET_TcpServerPacketEventLoop: select() syscall failed: %s\n", NET_ErrorString());
-			break;
-
-		}else if(activefd > 0){
-
-			for(i = 0, conn = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, conn++)
-			{
-
-				if(FD_ISSET(conn->sock, &fdr))
+			continue;
+		}
+		if(FD_ISSET(conn->remote.sock, &fdr))
+		{
+				switch(conn->state)
 				{
-
-					switch(conn->state)
-					{
 					case TCP_AUTHWAIT:
 					case TCP_AUTHAGAIN:
 
-                                                cursize = 0;
+                        cursize = 0;
 
-                                                while( cursize < 2048 )
-                                                {
-                                                    ret = NET_TcpServerGetPacket(conn, bufData + cursize, sizeof(bufData) - cursize, qfalse);
+						ret = NET_TcpServerGetPacket(conn, bufData, sizeof(bufData), qfalse);
 
-                                                    if(ret < 1)
-                                                        break;
-                                                    else
-                                                        cursize += ret;
-                                                }
+						if(ret > 0)
+						{
+							cursize = ret;
+                        }
 
-						if(conn->lastMsgTime == 0 || conn->sock < 1)
+						if(conn->lastMsgTime == 0 || conn->remote.sock < 1)
 						{
 							break; //Connection closed unexpected
 						//Close connection, we don't want to process huge messages as auth-packet or want to quit if the login was bad
-						}else if(cursize > 2048 || (conn->state = NET_TCPAuthPacketEvent(&conn->remote, bufData, cursize, conn->sock, &conn->connectionId, &conn->serviceId)) == TCP_AUTHBAD){
-							NET_TcpCloseSocket(conn->sock);
+						}else if( (conn->state = NET_TCPAuthPacketEvent(&conn->remote, bufData, cursize, conn->remote.sock, &conn->connectionId, &conn->serviceId)) == TCP_AUTHBAD){
+							NET_TcpCloseSocket(conn->remote.sock);
 
 						}else if(conn->state == TCP_AUTHSUCCESSFULL){
 							tcpServer.activeConnectionCount++;
@@ -2393,39 +2460,35 @@ void NET_TcpServerPacketEventLoop(){
 
 					case TCP_AUTHNOTME:
 					case TCP_AUTHBAD:	//Should not happen
-						NET_TcpCloseSocket(conn->sock);
+						NET_TcpCloseSocket(conn->remote.sock);
 						break;
 
 					case TCP_AUTHSUCCESSFULL:
 
 						cursize = 0;
-						do{
-                                                        ret = NET_TcpServerGetPacket(conn, bufData + cursize, sizeof(bufData) - cursize, qtrue);
-                                                        if(ret < 1)
-                                                            break;
-                                                        else
-                                                            cursize += ret;
-
-                                                }while(cursize < sizeof(bufData));
-
-						if(cursize >= sizeof(bufData))
+						
+                        ret = NET_TcpServerGetPacket(conn, bufData, sizeof(bufData), qtrue);
+                        if(ret > 0)
 						{
-							Com_PrintWarningNoRedirect( "NET_TcpServerPacketEventLoop: Oversize packet from %s\n", NET_AdrToString (&conn->remote));
+							cursize = ret;	
+						}
+
+
+						if(cursize > sizeof(bufData))
+						{
+							Com_PrintWarningNoRedirect( "NET_TcpServerPacketEventLoop: Oversize packet from %s. Must not happen!\n", NET_AdrToString (&conn->remote));
 							cursize = sizeof(bufData);
 						}
-						NET_TCPPacketEvent(&conn->remote, bufData, cursize, conn->sock, conn->connectionId, conn->serviceId);
+						NET_TCPPacketEvent(&conn->remote, bufData, cursize, conn->remote.sock, conn->connectionId, conn->serviceId);
 						break;
-					}
-
-				}else if(conn->lastMsgTime && conn->state < TCP_AUTHSUCCESSFULL && conn->lastMsgTime + MAX_TCPAUTHWAITTIME < NET_TimeGetTime()){
-					NET_TcpCloseSocket(conn->sock);
 				}
-			}
-		}else{
-			break; //No more events
+
+		}else if(conn->lastMsgTime && conn->state < TCP_AUTHSUCCESSFULL && conn->lastMsgTime + MAX_TCPAUTHWAITTIME < NET_TimeGetTime()){
+			NET_TcpCloseSocket(conn->remote.sock);
 		}
 	}
 }
+
 
 
 /*
@@ -2437,7 +2500,8 @@ Find a new slot in the client array for state handling
 ==================
 */
 
-void NET_TcpServerOpenConnection(netadr_t *from, int newfd){
+void NET_TcpServerOpenConnection( netadr_t *from )
+{
 
 	tcpConnections_t	*conn;
 	uint32_t			oldestTimeAccepted = 0xFFFFFFFF;
@@ -2448,7 +2512,7 @@ void NET_TcpServerOpenConnection(netadr_t *from, int newfd){
 
 	for(i = 0, conn = tcpServer.connections; i < MAX_TCPCONNECTIONS; i++, conn++)
 	{
-		if((NET_CompareBaseAdr(from, &conn->remote) && conn->state < TCP_AUTHSUCCESSFULL) || conn->sock < 1){//Net request from same address - Close the old not confirmed connection
+		if((NET_CompareBaseAdr(from, &conn->remote) && conn->state < TCP_AUTHSUCCESSFULL) || conn->remote.sock < 1){//Net request from same address - Close the old not confirmed connection
 			break;
 		}
 		if(conn->state < TCP_AUTHSUCCESSFULL){
@@ -2469,13 +2533,13 @@ void NET_TcpServerOpenConnection(netadr_t *from, int newfd){
 		if(tcpServer.activeConnectionCount > MAX_TCPCONNECTIONS / 3 && oldestTimeAccepted + MAX_TCPCONNECTEDTIMEOUT < NET_TimeGetTime()){
 				conn = &tcpServer.connections[oldestAccepted];
 				tcpServer.activeConnectionCount--; //As this connection is going to be closed decrease the counter
-				NET_TCPConnectionClosed(&conn->remote, conn->sock, conn->connectionId, conn->serviceId);
+				NET_TCPConnectionClosed(&conn->remote, conn->remote.sock, conn->connectionId, conn->serviceId);
 
 		}else if(oldestTime + MIN_TCPAUTHWAITTIME < NET_TimeGetTime()){
 				conn = &tcpServer.connections[oldest];
 
 		}else{
-			closesocket(newfd); //We have already too many open connections. Not possible to open more. Possible attack
+			closesocket(from->sock); //We have already too many open connections. Not possible to open more. Possible attack
 
 			if(tcpServer.lastAttackWarnTime + MIN_TCPAUTHWAITTIME < NET_TimeGetTime())
 			{
@@ -2488,26 +2552,25 @@ void NET_TcpServerOpenConnection(netadr_t *from, int newfd){
 
 	if(conn->lastMsgTime > 0)
 	{
-		NET_TcpCloseSocket(conn->sock);
+		NET_TcpCloseSocket(conn->remote.sock);
 	}
-
-	conn->sock = newfd;
 	conn->remote = *from;
 	conn->lastMsgTime = NET_TimeGetTime();
 	conn->state = TCP_AUTHWAIT;
 	conn->serviceId = -1;
 	conn->connectionId = -1;
 
-	FD_SET(conn->sock, &tcpServer.fdr);
+	FD_SET(conn->remote.sock, &tcpServer.fdr);
 
-	if(tcpServer.highestfd < conn->sock)
-		tcpServer.highestfd = conn->sock;
+	if(tcpServer.highestfd < conn->remote.sock)
+		tcpServer.highestfd = conn->remote.sock;
+
+	Com_DPrintf("Opening a new TCP server connection. Sock: %d Index: %d From:%s\n", conn->remote.sock, i, NET_AdrToString(&conn->remote));
 
 }
 
 /*
 ==================
-NET_TcpServerOpenConnection
 Only for Stream sockets (TCP)
 A TCP connection request has been received #1
 Try to accept this request
@@ -2515,30 +2578,38 @@ Try to accept this request
 */
 
 
-__optimize3 __regparm3 qboolean NET_TcpServerConnectRequest(netadr_t* net_from, int *newfd, fd_set *fdr){
+__optimize3 __regparm3 qboolean NET_TcpServerConnectRequest(netadr_t* net_from, fd_set *fdr){
 
-	*newfd = INVALID_SOCKET;
 	struct sockaddr_storage from;
 	socklen_t	fromlen;
-	int		err;
-
+	int		conerr;
+	net_from->sock = INVALID_SOCKET;
+	int socket;
+	ioctlarg_t	_true = 1;
+	
 	if(tcp_socket != INVALID_SOCKET && FD_ISSET(tcp_socket, fdr))
 	{
 		fromlen = sizeof(from);
 
-		*newfd = accept(tcp_socket, (struct sockaddr *) &from, &fromlen);
-		if (*newfd == SOCKET_ERROR)
+		socket = accept(tcp_socket, (struct sockaddr *) &from, &fromlen);
+		if (socket == SOCKET_ERROR)
 		{
-			err = socketError;
+			conerr = socketError;
 
-			if( err != EAGAIN && err != ECONNRESET )
+			if( conerr != EAGAIN && conerr != ECONNRESET )
 				Com_PrintWarning( "NET_TcpServerConnectRequest: %s\n", NET_ErrorString() );
 
 			return qfalse;
 		}
 		else
 		{
-			SockadrToNetadr( (struct sockaddr *) &from, net_from, qtrue, 0);
+			if( ioctlsocket( socket, FIONBIO, &_true ) == SOCKET_ERROR ) {
+				Com_PrintWarning( "NET_TcpServerConnectRequest: ioctl FIONBIO: %s\n", NET_ErrorString() );
+				conerr = socketError;
+				closesocket( socket );
+				return qfalse;
+			}
+			SockadrToNetadr( (struct sockaddr *) &from, net_from, qtrue, socket);
 			return qtrue;
 		}
 	}
@@ -2546,20 +2617,26 @@ __optimize3 __regparm3 qboolean NET_TcpServerConnectRequest(netadr_t* net_from, 
 	if(tcp6_socket != INVALID_SOCKET && FD_ISSET(tcp6_socket, fdr))
 	{
 		fromlen = sizeof(from);
-		*newfd = accept(tcp6_socket, (struct sockaddr *) &from, &fromlen);
+		socket = accept(tcp6_socket, (struct sockaddr *) &from, &fromlen);
 		
-		if (*newfd == SOCKET_ERROR)
+		if (socket == SOCKET_ERROR)
 		{
-			err = socketError;
+			conerr = socketError;
 
-			if( err != EAGAIN && err != ECONNRESET )
+			if( conerr != EAGAIN && conerr != ECONNRESET )
 				Com_PrintWarning( "NET_TcpServerConnectRequest: %s\n", NET_ErrorString() );
 
 			return qfalse;
 		}
 		else
 		{
-			SockadrToNetadr((struct sockaddr *) &from, net_from, qtrue, 0);
+			if( ioctlsocket( socket, FIONBIO, &_true ) == SOCKET_ERROR ) {
+				Com_PrintWarning( "NET_TcpServerConnectRequest: ioctl FIONBIO: %s\n", NET_ErrorString() );
+				conerr = socketError;
+				closesocket( socket );
+				return qfalse;
+			}
+			SockadrToNetadr((struct sockaddr *) &from, net_from, qtrue, socket);
 			return qtrue;
 		}
 	}
@@ -2573,15 +2650,16 @@ __optimize3 __regparm3 qboolean NET_TcpServerConnectRequest(netadr_t* net_from, 
 __optimize3 __regparm1 qboolean NET_TcpServerConnectEvent(fd_set *fdr)
 {
 	netadr_t from;
-	int newtcpfd;
 	int i;
 
 	//Give the system a possibility to abort processing network packets so it won't block execution of frames if the network getting flooded
 	for(i = 0; i < MAX_NETPACKETS; i++)
 	{
-		if(NET_TcpServerConnectRequest(&from, &newtcpfd, fdr)){
 
-			NET_TcpServerOpenConnection(&from, newtcpfd);
+		if(NET_TcpServerConnectRequest(&from, fdr))
+		{
+
+			NET_TcpServerOpenConnection( &from );
 
 		}else{
 			return qfalse;
@@ -2722,7 +2800,7 @@ int NET_TcpClientConnect( const char *remoteAdr ) {
 
 				socklen_t so_len = sizeof(err);
 
-				if(getsockopt(newsocket, SOL_SOCKET, SO_ERROR, (char*) &err, &so_len) == 0);
+				if(getsockopt(newsocket, SOL_SOCKET, SO_ERROR, (char*) &err, &so_len) == 0)
 				{
 					return newsocket;
 				}
@@ -2834,7 +2912,7 @@ __optimize3 __regparm1 qboolean NET_Sleep(unsigned int usec)
 	qboolean netabort = qfalse; //This will be true if we had to process more than 666 packets on one single interface
 				  //Usually this marks an ongoing floodattack onto this CoD4 server
 
-	if(usec < 0 || usec > 999999)
+	if( usec > 999999 )
 		usec = 0;
 
 	FD_ZERO(&fdr);

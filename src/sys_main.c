@@ -176,7 +176,7 @@ static __attribute__ ((noreturn)) void Sys_Exit( int exitCode ) {
 
 	// We can't do this
 	// as long as GL DLL's keep installing with atexit...
-	exit( exitCode );
+	Sys_ExitForOS( exitCode );
 }
 
 /*
@@ -296,7 +296,7 @@ __cdecl void QDECL Sys_Error( const char *fmt, ... ) {
 		fclose(fdout);
 	}
 
-	Sys_WaitForErrorConfirmation();
+	Sys_WaitForErrorConfirmation( msg );
 	
 	Sys_Exit( 1 ); // bk010104 - use single exit point.
 }
@@ -321,8 +321,13 @@ Sys_Print
 */
 void Sys_Print( const char *msg )
 {
+	Sys_EnterCriticalSection(CRIT_CONSOLE);
+
 //	CON_LogWrite( msg );
 	CON_Print( msg );
+
+	Sys_LeaveCriticalSection(CRIT_CONSOLE);
+
 }
 
 /*
@@ -442,7 +447,7 @@ int Sys_Main(char* commandLine){
 
     Sys_PlatformInit( );
 
-    Sys_ThreadInit();
+    Sys_InitializeCriticalSections();
 
     Sys_ThreadMain();
 

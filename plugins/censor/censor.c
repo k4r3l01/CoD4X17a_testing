@@ -404,13 +404,15 @@ char *SendDataToAdmins(char *message,int slot)
 	char *token2;
 	char msg[256];
 	char buffer[26];
+	//client_t *cl;
 	snprintf(msg,sizeof(msg),"^1Player^7 %s say vulgarity: ^3%s^7",Plugin_GetPlayerName(slot),message);
 	for(i = 0; i < Plugin_GetSlotCount();i++)
 	{
 		snprintf(dvar,sizeof(dvar),"acp_info_%i",i);
 		if(Plugin_Cvar_VariableString(dvar) == NULL)
 			continue;
-		if(strcmp(Plugin_GetPlayerState(i),"active") == 0)
+		//client_t *cl = &clientbase[i];
+		if(clientbase[i].state == CS_ACTIVE)
 		{
 			snprintf(buffer,sizeof(buffer),"%s",Plugin_Cvar_VariableString(dvar));
 			token = strtok(buffer,":");

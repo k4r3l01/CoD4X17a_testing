@@ -43,6 +43,10 @@ NET
 #define NET_DISABLEMCAST        0x08
 #define	PORT_ANY		-1
 
+#ifndef _WIN32
+	#define SOCKET_DEBUG
+#endif
+
 typedef enum {
 	NA_BAD = 0,					// an address lookup failed
 	NA_BOT = 0,
@@ -65,10 +69,10 @@ typedef enum {
 #define NET_ADDRSTRMAXLEN 48	// maximum length of an IPv6 address string including trailing '\0'
 
 typedef struct {
-	byte	type;
-	byte	scope_id;
+	netadrtype_t	type;
+	int				scope_id;
 	unsigned short	port;
-	signed short sock;		//Socket FD. 0 = any socket
+	int				sock;	//Socket FD. 0 = any socket
     union{
 	    byte	ip[4];
 	    byte	ipx[10];

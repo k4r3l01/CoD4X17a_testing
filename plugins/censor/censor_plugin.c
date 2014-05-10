@@ -10,29 +10,28 @@ PCL int OnInit(){	// Funciton called on server initiation
 	
 	return 0;
 }
-PCL void OnMessageSent(char *message, int slot,qboolean **show,qboolean **censored){
-	const char *ip = Plugin_GetPlayerIp(slot);
-    char newip[256];
-    StripLast(ip,newip,6);
+PCL void OnMessageSent(char* message, int slot, qboolean *show)
+{
     char *isvulgarism = "false";
 	G_SayCensor(message,slot,&isvulgarism);
 	if(strcmp( isvulgarism, "true") == 0)
 	{
-		Plugin_ChatPrintf(slot,"ip test %s",newip);
         SendDataToAdmins(message,slot);
-		*censored = qfalse;
-        *show = qfalse;
+		*show = qfalse;
 	}
 }
 
-PCL void OnClientInfoChange(int slotNum)
+PCL void OnClientUserinfoChanged(client_t* client)
 {
 	char *isvulgarism = "false";
-	char *name;
-	name = Plugin_GetPlayerName(slotNum);
+	int slotNum = client - clientbase;
+	char *name = client->name;
 	G_NickCensor(name,slotNum,&isvulgarism);
 	if(strcmp( isvulgarism, "true") == 0)
-		Plugin_SetPlayerName(slotNum, name);
+	{
+		Q_strncpyz(client->shortname, name, sizeof(client->shortname));
+		Info_SetValueForKey( client->userinfo, "name", client->shortname);
+	}
 }
 
 PCL void OnInfoRequest(pluginInfo_t *info){	// Function used to obtain information about the plugin
@@ -44,14 +43,7 @@ PCL void OnInfoRequest(pluginInfo_t *info){	// Function used to obtain informati
     // Requested handler version
     
     // =====  OPTIONAL  FIELDS  =====
-    info->pluginVersion.major = 1;
-    info->pluginVersion.minor = 0;	// Plugin version
+    info->pluginVersion.major = 2;
+    info->pluginVersion.minor = 200;	// Plugin version
     strncpy(info->fullName,"IceOps message censoring plugin by TheKelm",sizeof(info->fullName));
-}
-
-void StripLast(const char *input, char *output,int size)
-{
-    int len = strlen(input);
-    strcpy(output, input);
-    output[len - size] = '\0';
 }

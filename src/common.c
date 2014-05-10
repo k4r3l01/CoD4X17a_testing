@@ -48,6 +48,8 @@
 #include "punkbuster.h"
 #include "sec_init.h"
 #include "sys_cod4loader.h"
+#include "httpftp.h"
+#include "huffman.h"
 
 #include <string.h>
 #include <setjmp.h>
@@ -574,6 +576,7 @@ void Com_Quit_f( void ) {
 static void Com_InitCvars( void ){
     static const char* dedicatedEnum[] = {"listen server", "dedicated LAN server", "dedicated internet server", NULL};
     static const char* logfileEnum[] = {"disabled", "async file write", "sync file write", NULL};
+	mvabuf;
 
     char* s;
 
@@ -598,6 +601,7 @@ static void Com_InitCvars( void ){
     com_logfile = Cvar_RegisterEnum("logfile", logfileEnum, 0, 0, "Write to logfile");
     com_sv_running = Cvar_RegisterBool("sv_running", qfalse, 64, "Server is running");
 }
+
 
 
 void Com_InitThreadData()
@@ -739,6 +743,7 @@ void Com_Init(char* commandLine){
 
     static char creator[16];
     char creatorname[37];
+	mvabuf;
 
     int	qport;
 
@@ -757,7 +762,6 @@ void Com_Init(char* commandLine){
     Com_InitEventQueue();
 
     Com_ParseCommandLine(commandLine);
-
     Com_StartupVariable(NULL);
 
     Com_InitCvars();
@@ -851,7 +855,7 @@ void Com_Init(char* commandLine){
 
     Com_RandomBytes( (byte*)&qport, sizeof(int) );
     Netchan_Init( qport );
-
+	Huffman_InitMain();
 
     PHandler_Init();
 
@@ -876,6 +880,7 @@ void Com_Init(char* commandLine){
 
 
     HL2Rcon_Init( );
+	HTTPServer_Init( );
     Auth_Init( );
 
     AddRedirectLocations( );
@@ -961,17 +966,17 @@ __optimize3 void Com_Frame( void ) {
 	static unsigned int		com_frameNumber;
 
 
-        jmp_buf* abortframe = (jmp_buf*)Sys_GetValue(2);
+	jmp_buf* abortframe = (jmp_buf*)Sys_GetValue(2);
 
-        if(setjmp(*abortframe)){
-
-            Sys_EnterCriticalSection(2);
-
-            if(com_errorEntered)
-                Com_Error(ERR_FATAL,"Recursive error");
-
-            Sys_LeaveCriticalSection(2);
-        }
+	if(setjmp(*abortframe)){
+		/* Invokes Com_Error if needed */
+		Sys_EnterCriticalSection(CRIT_ERRORCHECK);
+		if(Com_InError() == qtrue)
+		{
+			Com_Error(0, "Error Cleanup");		
+		}
+		Sys_LeaveCriticalSection(CRIT_ERRORCHECK);
+	}
 	//
 	// main event loop
 	//
@@ -1039,6 +1044,10 @@ __optimize3 void Com_Frame( void ) {
 	//
 	// server side
 	//
+	
+	Com_EventLoop();
+
+	
 #ifdef TIMEDEBUG
 	if ( com_speeds->integer ) {
 		timeBeforeServer = Sys_Milliseconds ();
@@ -1050,10 +1059,11 @@ __optimize3 void Com_Frame( void ) {
 	PHandler_Event(PLUGINS_ONFRAME);
 
 	Com_TimedEventLoop();
-	Com_EventLoop();
 	Cbuf_Execute (0 ,0);
 	NET_Sleep(0);
 	NET_TcpServerPacketEventLoop();
+	Cbuf_Execute (0 ,0);
+	Sys_RunThreadCallbacks();
 	Cbuf_Execute (0 ,0);
 
 #ifdef TIMEDEBUG
@@ -1103,13 +1113,14 @@ __optimize3 void Com_Frame( void ) {
 	com_frameNumber++;
 
 	Com_UpdateRealtime();
-
-        Sys_EnterCriticalSection(2);
-
-        if(com_errorEntered)
-            Com_Error(ERR_FATAL,"Recursive error");
-
-        Sys_LeaveCriticalSection(2);
+	
+	/* Invokes Com_Error if needed */
+	Sys_EnterCriticalSection(CRIT_ERRORCHECK);
+	if(Com_InError() == qtrue)
+	{
+		Com_Error(0, "Error Cleanup");		
+	}
+	Sys_LeaveCriticalSection(CRIT_ERRORCHECK);
 }
 
 
@@ -1273,6 +1284,11 @@ int Com_FilterPath( char *filter, char *name, int casesensitive ) {
 	return Com_Filter( new_filter, new_name, casesensitive );
 }
 
+qboolean Com_InError()
+{
+	return com_errorEntered;
+}
+
 /*
 =============
 Com_Error
@@ -1285,19 +1301,57 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	va_list		argptr;
 	static int	lastErrorTime;
 	static int	errorCount;
+	static int	lastErrorCode;
+	static qboolean mainThreadInError;
 	int		currentTime;
 	jmp_buf*	abortframe;
+	mvabuf;
+
 
 	if(com_developer && com_developer->integer > 1)
-		__asm__("int $3");
+		__builtin_trap ( );
+		
+	Sys_EnterCriticalSection(CRIT_ERROR);
+	
+	if(Sys_IsMainThread() == qfalse)
+	{
+		com_errorEntered = qtrue;
+		
+		va_start (argptr,fmt);
+		Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
+		va_end (argptr);
+		lastErrorCode = code;
+		/* Terminate this thread and wait for the main-thread entering this function */
+		Sys_LeaveCriticalSection(CRIT_ERROR);
+		Sys_ExitThread(-1);
+		return;
+	}
+	/* Main thread can't be twice in this function at same time */
+	Sys_LeaveCriticalSection(CRIT_ERROR);
 
-	if(com_errorEntered)
-		Sys_Error("recursive error after: %s", com_errorMessage);
-
-	com_errorEntered = qtrue;
-
+	if(mainThreadInError == qtrue)
+	{
+		/* Com_Error() entered while shutting down. Now a fast shutdown! */
+		Sys_Error ("%s", com_errorMessage);
+		return;
+	}
+	mainThreadInError = qtrue;
+	
+	if(com_errorEntered == qfalse)
+	{
+		com_errorEntered = qtrue;
+		
+		va_start (argptr,fmt);
+		Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
+		va_end (argptr);
+		lastErrorCode = code;
+	
+	}
+	
+	code = lastErrorCode;
+	
 	Cvar_RegisterInt("com_errorCode", code, code, code, CVAR_ROM, "The last calling error code");
-
+	
 	// if we are getting a solid stream of ERR_DROP, do an ERR_FATAL
 	currentTime = Sys_Milliseconds();
 	if ( currentTime - lastErrorTime < 400 ) {
@@ -1311,9 +1365,6 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	lastErrorTime = currentTime;
 	abortframe = (jmp_buf*)Sys_GetValue(2);
 
-	va_start (argptr,fmt);
-	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
-	va_end (argptr);
 
 	if (code != ERR_DISCONNECT)
 		Cvar_RegisterString("com_errorMessage", com_errorMessage, CVAR_ROM, "The last calling error message");
@@ -1323,12 +1374,14 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 		// make sure we can get at our local stuff
 		/*FS_PureServerSetLoadedPaks("", "");*/
 		com_errorEntered = qfalse;
+		mainThreadInError = qfalse;
 		longjmp(*abortframe, -1);
 	} else if (code == ERR_DROP) {
 		Com_Printf ("********************\nERROR: %s\n********************\n", com_errorMessage);
 		SV_Shutdown (va("Server crashed: %s",  com_errorMessage));
 		/*FS_PureServerSetLoadedPaks("", "");*/
 		com_errorEntered = qfalse;
+		mainThreadInError = qfalse;
 		longjmp (*abortframe, -1);
 	} else {
 		SV_Shutdown(va("Server fatal crashed: %s", com_errorMessage));
@@ -1336,4 +1389,7 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	NET_Shutdown();
 	Com_CloseLogFiles( );
 	Sys_Error ("%s", com_errorMessage);
+	
 }
+
+

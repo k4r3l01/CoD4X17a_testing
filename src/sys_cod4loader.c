@@ -72,6 +72,24 @@ static void __cdecl Cbuf_InsertText_Wrapper_IW(int dummy, const char *text )
     Cbuf_InsertText( text );
 }
 
+
+char * QDECL va_binaryfuc( char *format, ... ) {
+	va_list		argptr;
+	static char string[2][32000]; // in case va is called by nested functions
+	static int	index = 0;
+	char		*buf;
+	
+	buf = string[index & 1];
+	index++;
+	
+	va_start (argptr, format);
+	Q_vsnprintf (buf, sizeof(*string), format, argptr);
+	va_end (argptr);
+	
+	return buf;
+}
+
+
 static void Sys_PatchImageData( void )
 {
 
@@ -219,13 +237,14 @@ static byte patchblock_DB_LOADXASSETS[] = { 0x8a, 0x64, 0x20, 0x8,
 	SetJump(0x817a392, SV_WriteSnapshotToClient);
 	SetJump(0x8178da2, SV_Netchan_TransmitNextFragment);
 	SetJump(0x81d76ca, FS_GetBasepath); //Prior: GetCurrentWorkingDir
+	SetJump(0x8203f72, DB_BuildOSPath);
 	SetJump(0x808b764, ClientScr_SetSessionTeam);
 	SetJump(0x80b43c4, G_LogPrintf);
 	SetJump(0x80a8068, ClientUserinfoChanged);
 	SetJump(0x81aa0be, BigInfo_SetValueForKey);
 	SetJump(0x81d6fca, Sys_Milliseconds);
 	SetJump(0x81d6f7c, Sys_MillisecondsRaw);
-	SetJump(0x81a9f8a, va);
+	SetJump(0x81a9f8a, va_binaryfuc);
 	SetJump(0x8131200, MSG_Init);
 	SetJump(0x8131320, MSG_InitReadOnly);
 	SetJump(0x8131294, MSG_InitReadOnlySplit);
@@ -282,6 +301,9 @@ static byte patchblock_DB_LOADXASSETS[] = { 0x8a, 0x64, 0x20, 0x8,
 	FS_PatchFileHandleData();
 	Com_PatchError();
 	Cvar_PatchModifiedFlags();
+	/* Override the unknown gametype -> defaulting to dm bug */
+	*(byte*)0x817c7bc = 0xeb;
+
 }
 
 
@@ -364,16 +386,19 @@ qboolean Sys_LoadImage( ){
     {
         return qfalse;
     }
-    if(Sys_MemoryProtectExec(BIN_SECT_PLT_START, BIN_SECT_PLT_LENGTH) == qfalse)
+	/* 4 bytes is gap between .plt end and .text start */
+    if(Sys_MemoryProtectExec(BIN_SECT_PLT_START, BIN_SECT_PLT_LENGTH + BIN_SECT_TEXT_LENGTH + 4) == qfalse)
     {
         FS_FreeFile(fileimage);
         return qfalse;
     }
+/*
     if(Sys_MemoryProtectExec(BIN_SECT_TEXT_START, BIN_SECT_TEXT_LENGTH) == qfalse)
     {
         FS_FreeFile(fileimage);
         return qfalse;
     }
+*/
     if(Sys_MemoryProtectReadonly(BIN_SECT_RODATA_START, BIN_SECT_RODATA_LENGTH) == qfalse)
     {
         FS_FreeFile(fileimage);

@@ -321,14 +321,9 @@ A "connect" OOB command has been received
 __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 	char		userinfo[MAX_INFO_STRING];
 	int			reconnectTime;
-	int			a;
 	int			c;
 	int			j;
-	int			k;
 	int			i;
-	int			counts;
-	int			admins;
-	int			vip;
 	client_t		*cl, *newcl;
 	int			count;
 	int			number;
@@ -341,6 +336,7 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 	char			*password;
 	const char		*denied;
 	qboolean		pluginreject;
+	char			buf[MAX_STRING_CHARS];
 
 	
 	Q_strncpyz( userinfo, SV_Cmd_Argv(1), sizeof(userinfo) );
@@ -422,9 +418,10 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 
 	Q_strncpyz(nick, Info_ValueForKey( userinfo, "name" ),33);
 
-	denied = SV_PlayerBannedByip(from);
+	denied = SV_PlayerBannedByip(from, buf, sizeof(buf));
 	if(denied){
             NET_OutOfBandPrint( NS_SERVER, from, "error\n%s\n", denied);
+		Com_Printf("Rejecting a connection from a banned network address: %s\n", NET_AdrToString(from));
 	    Com_Memset( &svse.challenges[c], 0, sizeof( svse.challenges[c] ));
 	    return;
 	}
@@ -437,8 +434,14 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 		return;
 	}
 	version = atoi( Info_ValueForKey( userinfo, "protocol" ));
-	if ( version != PROTOCOL_VERSION ) {
-		NET_OutOfBandPrint( NS_SERVER, from, "error\nServer uses a different protocol version: %i\n You have to install the update to Call of Duty 4  v1.7", PROTOCOL_VERSION );
+	if ( version != sv_protocol->integer ) {
+		if( sv_protocol->integer == 6 && version < 6)
+		{
+			NET_OutOfBandPrint( NS_SERVER, from, "error\nServer uses a different protocol version: %i\n You have to install the update to Call of Duty 4  v1.7", sv_protocol->integer );
+		}else{
+			NET_OutOfBandPrint( NS_SERVER, from, "error\nServer uses a different protocol version: %i\n You use protocol version: %i", sv_protocol->integer, version );
+		}
+		
 		Com_Printf("rejected connect from version %i\n", version);
 		Com_Memset( &svse.challenges[c], 0, sizeof( svse.challenges[c] ));
 		return;
@@ -472,33 +475,14 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 
 	//Get new slot for client
 	// check for privateClient password
-	counts = sv_privateClients->integer + sv_privateAdmins->integer;
-	admins = 0;
-	vip	   = 0;
-	for ( k = 0 ; k < sv_maxclients->integer ; k++ )
-	{
-		if ( svs.clients[k].state >= CS_CONNECTED ) {
-			if (svs.clients[k].netchan.remoteAddress.type != NA_BOT) {
-				if(k < sv_privateAdmins->integer)
-					admins++;
-				else if(k >= sv_privateAdmins->integer && k < counts)
-					vip++;
-			}
-		}
-	}	
-	password = Info_ValueForKey( userinfo, "password" );
-	if(!newcl){
-		if ( !strcmp( password, sv_adminPassword->string ) ) {
-			for ( j = 0; j < sv_privateAdmins->integer ; j++) {
+    qboolean active = qfalse;
+    password = Info_ValueForKey( userinfo, "password" );
+        
+    if(!newcl){
+        PHandler_Event(PLUGINS_ONPLAYERCONNECTING,&newcl,&cl,password,&active);
+        if ( !strcmp( password, sv_privatePassword->string ) && !active) {
+			for ( j = 0; j < sv_privateClients->integer ; j++) {
 				cl = &svs.clients[j];
-				if (cl->state == CS_FREE) {
-					newcl = cl;
-					break;
-				}
-			}
-		}else if ( !strcmp( password, sv_privatePassword->string ) || (!strcmp( password, sv_adminPassword->string ) && admins == sv_privateAdmins->integer) ) {
-			for ( a = sv_privateAdmins->integer; a < counts; a++) {
-				cl = &svs.clients[a];
 				if (cl->state == CS_FREE) {
 					newcl = cl;
 					break;
@@ -615,19 +599,20 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
         PHandler_Event(PLUGINS_ONPLAYERCONNECT, clientNum, from, newcl->originguid, userinfo, newcl->authentication, &denied);
 
         if(!psvs.useuids)
-            denied = SV_PlayerIsBanned(0, newcl->pbguid, from);
+            denied = SV_PlayerIsBanned(0, newcl->pbguid, from, buf, sizeof(buf));
 
         else if(newcl->uid != 0)
-            denied = SV_PlayerIsBanned(newcl->uid, NULL, from);
+            denied = SV_PlayerIsBanned(newcl->uid, NULL, from, buf, sizeof(buf));
 
         if(denied){
                 NET_OutOfBandPrint( NS_SERVER, from, "error\n%s", denied);
-		Com_Memset( &svse.challenges[c], 0, sizeof( svse.challenges[c] ));
+				Com_Printf("Rejecting a connection from a banned GUID/UID\n");
+				Com_Memset( &svse.challenges[c], 0, sizeof( svse.challenges[c] ));
                 svse.connectqueue[i].lasttime = 0;
                 svse.connectqueue[i].firsttime = 0;
                 svse.connectqueue[i].challengeslot = 0;
-		svse.connectqueue[i].attempts = 0;
-		return;
+				svse.connectqueue[i].attempts = 0;
+				return;
         }
 
 #ifdef PUNKBUSTER
@@ -647,10 +632,10 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 		}
 	}
 #endif
-	newcl->unknowndirectconnect1 = 0;	//Whatever it is ???
+	newcl->unsentVoiceData = 0;
 	newcl->hasVoip = 1;
-        newcl->gentity = SV_GentityNum(clientNum);
-        newcl->clscriptid = Scr_AllocArray();
+    newcl->gentity = SV_GentityNum(clientNum);
+    newcl->clscriptid = Scr_AllocArray();
 
 	// get the game a chance to reject this connection or modify the userinfo
 	denied = ClientConnect(clientNum, newcl->clscriptid);
@@ -716,59 +701,41 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 __optimize3 __regparm2 void SV_ReceiveStats(netadr_t *from, msg_t* msg){
 
 	short qport;
-	qport = MSG_ReadShort( msg );// & 0xffff;
 	client_t *cl;
-	int i;
 	byte curstatspacket;
 	byte var_02;
 	int buffersize;
 
+	qport = MSG_ReadShort( msg );
+	
 	// find which client the message is from
-	for ( i = 0, cl = svs.clients ; i < sv_maxclients->integer ; i++,cl++ ) {
-		if ( cl->state == CS_FREE ) {
-			continue;
-		}
-		if ( !NET_CompareBaseAdr( from, &cl->netchan.remoteAddress ) ) {
-			continue;
-		}
-
-		// it is possible to have multiple clients from a single IP
-		// address, so they are differentiated by the qport variable
-		if ( cl->netchan.qport != qport ) {
-			continue;
-		}
-
-		// the IP port can't be used to differentiate them, because
-		// some address translating routers periodically change UDP
-		// port assignments
-		if ( cl->netchan.remoteAddress.port != from->port ) {
-			Com_Printf( "SV_ReceiveStats: fixing up a translated port\n" );
-			cl->netchan.remoteAddress.port = from->port;
-		}
-
-		curstatspacket = MSG_ReadByte(msg);
-		if(curstatspacket > 6){
-		    Com_Printf("Invalid stat packet %i of stats data\n", curstatspacket);
-		    return;
-		}
-		Com_Printf("Received packet %i of stats data\n", curstatspacket);
-		if((curstatspacket+1)*1240 >= sizeof(cl->stats)){
-		    buffersize = sizeof(cl->stats)-(curstatspacket*1240);
-		}else{
-		    buffersize = 1240;
-		}
-		MSG_ReadData(msg, &cl->stats[1240*curstatspacket], buffersize);
-
-		cl->receivedstats |= (1 << curstatspacket);
-		var_02 = cl->receivedstats;
-		var_02 = ~var_02;
-		var_02 = var_02 & 127;
-		cl->lastPacketTime = svs.time;
-
-		NET_OutOfBandPrint( NS_SERVER, from, "statResponse %i", var_02 );
+	cl = SV_ReadPackets(from, qport);
+	if(cl == NULL)
+	{
+		Com_DPrintf("SV_ReceiveStats: Received statspacket from disconnected remote client: %s qport: %d\n", NET_AdrToString(from), qport);
 		return;
 	}
-	Com_DPrintf("SV_ReceiveStats: Received statspacket from disconnected remote client: %s qport: %d\n", NET_AdrToString(from), qport);
+	
+	curstatspacket = MSG_ReadByte(msg);
+	if(curstatspacket > 6){
+		Com_Printf("Invalid stat packet %i of stats data\n", curstatspacket);
+		return;
+	}
+	Com_Printf("Received packet %i of stats data\n", curstatspacket);
+	if((curstatspacket+1)*1240 >= sizeof(cl->stats)){
+		buffersize = sizeof(cl->stats)-(curstatspacket*1240);
+	}else{
+		buffersize = 1240;
+	}
+	MSG_ReadData(msg, &cl->stats[1240*curstatspacket], buffersize);
+
+	cl->receivedstats |= (1 << curstatspacket);
+	var_02 = cl->receivedstats;
+	var_02 = ~var_02;
+	var_02 = var_02 & 127;
+	cl->lastPacketTime = svs.time;
+
+	NET_OutOfBandPrint( NS_SERVER, from, "statResponse %i", var_02 );
 }
 
 
@@ -785,23 +752,22 @@ void SV_UserinfoChanged( client_t *cl ) {
 	char	ip[128];
 	int	i;
 	int	len;
-	int slotNum;
-	slotNum = cl - svs.clients;
+
 	// name for C code
 	Q_strncpyz( cl->name, Info_ValueForKey (cl->userinfo, "name"), sizeof(cl->name) );
 
-	if(!Q_isprintstring(cl->name) || strstr(cl->name,"ID_") || strstr(cl->name,"///") || Q_PrintStrlen(cl->name) < 3){
+	if(strstr(cl->name,"ID_") || strstr(cl->name,"///") || Q_PrintStrlen(cl->name) < 3){
 		if(cl->state == CS_ACTIVE){
-			if(!Q_isprintstring(cl->name)) SV_SendServerCommand(cl, "c \"^5Playernames can not contain advanced ASCII-characters\"");
+			//if(!Q_isprintstring(cl->name)) SV_SendServerCommand(cl, "c \"^5Playernames can not contain advanced ASCII-characters\"");
 			if(strlen(cl->name) < 3) SV_SendServerCommand(cl, "c \"^5Playernames can not be shorter than 3 characters\"");
 		}
-		if(cl->uid <= 0){
+		/*if(cl->uid <= 0){
 		    Com_sprintf(cl->name, 16, "CID_%i", cl - svs.clients);
 		    cl->usernamechanged = UN_NEEDUID;
 		} else {
 		    Com_sprintf(cl->name, 16, "ID_%i:%i", cl->uid / 100000000, cl->uid % 100000000);
 		    cl->usernamechanged = UN_OK;
-		}
+		}*/
 		Info_SetValueForKey( cl->userinfo, "name", cl->name);
 	}else{
 	    cl->usernamechanged = UN_VERIFYNAME;
@@ -871,7 +837,9 @@ void SV_UserinfoChanged( client_t *cl ) {
 	cl->wwwDownload = qfalse;
 	if(Info_ValueForKey(cl->userinfo, "cl_wwwDownload"))
 		cl->wwwDownload = qtrue;
-	PHandler_Event(PLUGINS_USERINFOCHANGE, slotNum);	
+		
+	PHandler_Event(PLUGINS_ONCLIENTUSERINFOCHANGED, cl);
+
 }
 
 
@@ -952,7 +920,7 @@ __cdecl void SV_DropClient( client_t *drop, const char *reason ) {
 		drop->state = CS_ZOMBIE;        // become free in a few seconds
 
 		HL2Rcon_EventClientLeave(clientnum);
-		PHandler_Event(PLUGINS_ONPLAYERDC,(void*)drop);	// Plugin event
+		PHandler_Event(PLUGINS_ONPLAYERDC, drop, reason);	// Plugin event
 		return;
 	}
 
@@ -1159,6 +1127,8 @@ __optimize3 __regparm3 void SV_UserMove( client_t *cl, msg_t *msg, qboolean delt
 		cl->clFrames++;
 
 		SV_ClientThink( cl, &cmds[ i ] );
+	
+		PHandler_Event(PLUGINS_ONCLIENTMOVECOMMAND, cl, &cmds[ i ]);
 
 		if(cl->demorecording && !cl->demowaiting)
 			SV_WriteDemoArchive(cl);
@@ -1173,6 +1143,8 @@ SV_ClientEnterWorld
 void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 	int clientNum;
 	sharedEntity_t *ent;
+	mvabuf;
+
 /*
 	if(client->netchan.remoteAddress.type != NA_BOT && ((sv_pure->integer != 0 && client->pureAuthentic == 0) || !psvs.serverAuth))
 		return;
@@ -1204,7 +1176,8 @@ void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 	//Set gravity, speed... to system default
 	Pmove_ExtendedInitForClient(client);
 
-	if(sv_autodemorecord->boolean && !client->demorecording){
+	if(sv_autodemorecord->boolean && !client->demorecording && (client->netchan.remoteAddress.type == NA_IP || client->netchan.remoteAddress.type == NA_IP6))
+	{
 		if(psvs.useuids){
 
 			if(client->uid > 0)
@@ -1216,7 +1189,7 @@ void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 		}
 	}
 
-	if(!client->enteredWorldForFirstTime){
+	if(!client->enteredWorldForFirstTime && (client->netchan.remoteAddress.type == NA_IP || client->netchan.remoteAddress.type == NA_IP6)){
 		if(psvs.useuids){
 			if(client->uid > 0){
 				SV_EnterLeaveLog("^5Client %s %s ^5entered this server in slot %d with uid %d", client->name, NET_AdrToString(&client->netchan.remoteAddress), clientNum, client->uid);
@@ -1232,7 +1205,7 @@ void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 	client->pureAuthentic = 1;
 
 	HL2Rcon_EventClientEnterWorld( clientNum );
-	PHandler_Event(PLUGINS_ONCLIENTENTERWORLD, clientNum);
+	PHandler_Event(PLUGINS_ONCLIENTENTERWORLD, client);
 
 }
 
@@ -1249,6 +1222,7 @@ sharedEntity_t* SV_AddBotClient(){
     netadr_t botnet;
     usercmd_t ucmd;
     fileHandle_t file;
+	mvabuf;
 
         //Getting a new name for our bot
 	FS_SV_FOpenFileRead("botnames.txt", &file);
@@ -1299,7 +1273,7 @@ sharedEntity_t* SV_AddBotClient(){
 	Info_SetValueForKey( userinfo, "snaps", "20");
 	Info_SetValueForKey( userinfo, "rate", "99999");
 	Info_SetValueForKey( userinfo, "name", name);
-	Info_SetValueForKey( userinfo, "protocol", va("%i",PROTOCOL_VERSION));
+	Info_SetValueForKey( userinfo, "protocol", va("%i", sv_protocol->integer));
 	Info_SetValueForKey( userinfo, "qport", va("%i", qport));
 
 	Com_Memset(&botnet,0,sizeof(botnet));
@@ -1319,7 +1293,7 @@ sharedEntity_t* SV_AddBotClient(){
 	// save the userinfo
 	Q_strncpyz(cl->userinfo, userinfo, 1024 );
 
-	cl->unknowndirectconnect1 = 0;	//Whatever it is ???
+	cl->unsentVoiceData = 0;
 	cl->hasVoip = 0;
         cl->gentity = SV_GentityNum(i);
         cl->clscriptid = Scr_AllocArray();
@@ -2279,9 +2253,10 @@ qboolean SV_ClientCommand( client_t *cl, msg_t *msg, qboolean inDl) {
 	const char  *s;
 	qboolean clientOk = qtrue;
 	qboolean floodprotect = qtrue;
+	char stringbuf[MAX_STRING_CHARS];
 
 	seq = MSG_ReadLong( msg );
-	s = MSG_ReadString( msg );
+	s = MSG_ReadString( msg, stringbuf, sizeof(stringbuf));
 
 	// see if we have already executed it
 	if ( cl->lastClientCommand >= seq ) {
@@ -2363,4 +2338,98 @@ void SV_DelayDropClient(client_t *client, const char *dropmsg)
 	{
 		client->delayDropMsg = dropmsg;
 	}
+}
+
+
+void SV_WriteClientVoiceData(msg_t *msg, client_t *client)
+{	
+	int i;
+	
+	MSG_WriteByte(msg, client->unsentVoiceData);
+	
+	for(i = 0; i < client->unsentVoiceData; i++)
+	{
+		MSG_WriteByte( msg, client->voicedata[i].num );
+		MSG_WriteByte( msg, client->voicedata[i].dataLen );
+		MSG_WriteData( msg, client->voicedata[i].data, client->voicedata[i].dataLen );
+	}
+	
+}
+
+void SV_SendClientVoiceData(client_t *client)
+{
+	
+	msg_t msg;
+	byte buff[0x20000];
+	
+	if ( client->state < CS_ACTIVE || client->unsentVoiceData == 0)
+	{
+		return;
+	}
+    MSG_Init(&msg, buff, sizeof(buff));
+    MSG_WriteString(&msg, "v");
+    SV_WriteClientVoiceData(&msg, client);
+    if ( msg.overflowed )
+    {
+		Com_PrintWarning( "WARNING: voice msg overflowed for %s\n", client->shortname);
+		return;
+    }
+    NET_OutOfBandData(NS_SERVER, &client->netchan.remoteAddress, msg.data, msg.cursize);
+    client->unsentVoiceData = 0;
+}
+
+void SV_GetVoicePacket(netadr_t *from, msg_t *msg)
+{
+	int qport;
+
+	client_t *cl;
+	
+	qport = MSG_ReadShort(msg);
+
+	cl = SV_ReadPackets(from, qport);
+	
+	if ( cl->state >= CS_CONNECTED)
+	{
+		cl->lastPacketTime = svs.time;
+		if ( cl->state >= CS_ACTIVE )
+			SV_UserVoice(cl, msg);
+		else
+			SV_PreGameUserVoice(cl, msg);
+
+	}
+}
+
+client_t* SV_ReadPackets(netadr_t *from, int qport)
+{
+	int i;
+	client_t *cl;
+
+	// find which client the message is from
+	for (i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++)
+	{
+		
+		if ( cl->state == CS_FREE ) {
+			continue;
+		}
+		if ( !NET_CompareBaseAdr( from, &cl->netchan.remoteAddress ) ) {
+			continue;
+		}
+		
+		// it is possible to have multiple clients from a single IP
+		// address, so they are differentiated by the qport variable
+		if ( cl->netchan.qport != qport ) {
+			continue;
+		}
+		
+		// the IP port can't be used to differentiate them, because
+		// some address translating routers periodically change UDP
+		// port assignments
+		if ( cl->netchan.remoteAddress.port != from->port ) {
+			Com_Printf( "SV_ReceiveStats: fixing up a translated port\n" );
+			cl->netchan.remoteAddress.port = from->port;
+		}
+		return cl;
+	
+	}
+	return NULL;
 }

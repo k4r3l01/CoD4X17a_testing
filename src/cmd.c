@@ -32,6 +32,7 @@
 #include "filesystem.h"
 #include "server.h"
 #include "punkbuster.h"
+#include "sys_thread.h"
 
 /*
 =============================================================================
@@ -81,6 +82,8 @@ void Cbuf_AddText( const char *text ) {
 	byte*		new_buf;
 	len = strlen (text) +1;
 
+	Sys_EnterCriticalSection(CRIT_CBUF);
+	
 	if ( len + cmd_text.cursize > cmd_text.maxsize ) {
 
 		if(cmd_text.data == cmd_text_buf)
@@ -97,6 +100,7 @@ void Cbuf_AddText( const char *text ) {
 		if(new_buf == NULL)
 		{
 			Com_PrintError( "Cbuf_AddText overflowed ; realloc failed\n" );
+			Sys_LeaveCriticalSection(CRIT_CBUF);
 			return;
 		}
 		cmd_text.data = new_buf;
@@ -105,6 +109,9 @@ void Cbuf_AddText( const char *text ) {
 
 	Com_Memcpy(&cmd_text.data[cmd_text.cursize], text, len -1);
 	cmd_text.cursize += len -1;
+
+	Sys_LeaveCriticalSection(CRIT_CBUF);
+	
 }
 
 /*
@@ -121,6 +128,10 @@ void Cbuf_InsertText( const char *text ) {
 	byte*		new_buf;
 
 	len = strlen( text ) + 1;
+
+	Sys_EnterCriticalSection(CRIT_CBUF);
+
+	
 	if ( len + cmd_text.cursize > cmd_text.maxsize ) {
 
 		if(cmd_text.data == cmd_text_buf)
@@ -137,6 +148,8 @@ void Cbuf_InsertText( const char *text ) {
 		if(new_buf == NULL)
 		{
 			Com_PrintError( "Cbuf_InsertText overflowed ; realloc failed\n" );
+			
+			Sys_LeaveCriticalSection(CRIT_CBUF);
 			return;
 		}
 		cmd_text.data = new_buf;
@@ -155,6 +168,8 @@ void Cbuf_InsertText( const char *text ) {
 	cmd_text.data[ len - 1 ] = '\n';
 
 	cmd_text.cursize += len;
+	
+	Sys_LeaveCriticalSection(CRIT_CBUF);
 }
 
 /*
@@ -167,6 +182,9 @@ void Cbuf_ExecuteText (int exec_when, const char *text)
 	switch (exec_when)
 	{
 	case EXEC_NOW:
+		
+		Sys_EnterCriticalSection(CRIT_CBUF);
+		
 		if (text && strlen(text) > 0) {
 			Com_DPrintf(S_COLOR_YELLOW "EXEC_NOW %s\n", text);
 			Cmd_ExecuteString (text);
@@ -174,6 +192,9 @@ void Cbuf_ExecuteText (int exec_when, const char *text)
 			Cbuf_Execute();
 			Com_DPrintf(S_COLOR_YELLOW "EXEC_NOW %s\n", cmd_text.data);
 		}
+		
+		Sys_LeaveCriticalSection(CRIT_CBUF);
+			
 		break;
 	case EXEC_INSERT:
 		Cbuf_InsertText (text);
@@ -288,7 +309,7 @@ void __cdecl Cbuf_Execute_WrapperIW(int arg1, int arg2)
 /*
 ==============================================================================
 
-						SCRIPT COMMANDS
+								COMMANDS
 
 ==============================================================================
 */
@@ -400,14 +421,16 @@ Inserts the current value of a variable as command text
 */
 void Cmd_Vstr_f( void ) {
 	char	*v;
-
+	char	buf[MAX_STRING_CHARS];
+	
 	if (Cmd_Argc () != 2) {
 		Com_Printf ("vstr <variablename> : execute a variable command\n");
 		return;
 	}
 
 	v = Cvar_VariableString( Cmd_Argv( 1 ) );
-	Cbuf_InsertText( va("%s\n", v ) );
+	Com_sprintf(buf, sizeof(buf), "%s", v);
+	Cbuf_InsertText( buf );
 }
 
 
@@ -664,10 +687,10 @@ static void Cmd_TokenizeStringInternal( const char *text_in, qboolean ignoreQuot
 
 		while ( 1 ) {
 			// skip whitespace
-			while ( *text && *text <= ' ' ) {
+			while ( *text != '\0' && (byte)*text <= ' ' ) {
 				text++;
 			}
-			if ( !*text ) {
+			if ( *text == '\0' ) {
 				return;			// all tokens parsed
 			}
 
@@ -681,7 +704,7 @@ static void Cmd_TokenizeStringInternal( const char *text_in, qboolean ignoreQuot
 				while ( *text && ( text[0] != '*' || text[1] != '/' ) ) {
 					text++;
 				}
-				if ( !*text ) {
+				if ( *text == '\0') {
 					return;		// all tokens parsed
 				}
 				text += 2;
@@ -695,7 +718,7 @@ static void Cmd_TokenizeStringInternal( const char *text_in, qboolean ignoreQuot
 		if ( !ignoreQuotes && *text == '"' ) {
 			param->cmd_argv[param->cmd_argc] = textOut;
 			text++;
-			while ( *text && *text != '"' && param->availableBuf > 1) {
+			while ( *text != '\0' && *text != '"' && param->availableBuf > 1) {
 				*textOut++ = *text++;
 				--param->availableBuf;
 			}
@@ -708,7 +731,7 @@ static void Cmd_TokenizeStringInternal( const char *text_in, qboolean ignoreQuot
 			}
 			param->cmd_argc++;
 			param->cmd_argv[param->cmd_argc] = textOut;
-			if ( !*text ) {
+			if ( *text == '\0') {
 				return;		// all tokens parsed
 			}
 			text++;
@@ -720,7 +743,7 @@ static void Cmd_TokenizeStringInternal( const char *text_in, qboolean ignoreQuot
 
 
 		// skip until whitespace, quote, or command
-		while ( *text > ' ' && param->availableBuf > 1) {
+		while ( (byte)*text > ' ' && param->availableBuf > 1) {
 			if ( !ignoreQuotes && text[0] == '"' ) {
 				break;
 			}
@@ -750,7 +773,7 @@ static void Cmd_TokenizeStringInternal( const char *text_in, qboolean ignoreQuot
 		param->cmd_argc++;
 		param->cmd_argv[param->cmd_argc] = textOut;
 
-		if ( !*text ) {
+		if ( *text == '\0') {
 			return;		// all tokens parsed
 		}
 	}
@@ -893,6 +916,7 @@ qboolean Cmd_InfoSetPower( const char *infostring )
 void Cmd_WritePowerConfig(char* buffer, int size)
 {
     char infostring[MAX_INFO_STRING];
+	mvabuf;
 
     Q_strcat(buffer, size,"\n//Minimum power settings\n");
     cmd_function_t *cmd;
@@ -1089,7 +1113,6 @@ void Cmd_CompleteCfgName( char *args, int argNum ) {
 	}
 }
 */
-
 void Cmd_Init( void ) {
 
 	Cmd_AddCommand( "cmdlist",Cmd_List_f );
@@ -1098,4 +1121,5 @@ void Cmd_Init( void ) {
 	Cmd_AddCommand( "vstr",Cmd_Vstr_f );
 	Cmd_AddCommand( "echo",Cmd_Echo_f );
 	Cmd_AddCommand( "wait", Cmd_Wait_f );
+
 }

@@ -267,6 +267,8 @@ typedef enum {
 // time and reading them back at connection time.  Anything added here
 // MUST be dealt with in G_InitSessionData() / G_ReadSessionData() / G_WriteSessionData()
 typedef struct {
+
+	int clientState;		// 0x300c
 	//Most is not active
 	team_t sessionTeam;		//0x3010
 	int spectatorTime;              // for determining next-in-line to play
@@ -303,22 +305,14 @@ typedef struct {
 // usercmd_t is sent to the server each client frame
 typedef struct usercmd_s {//Not Known
 	int			serverTime;
-/*
-	byte			u0;
-	byte			u1;
-	byte			u2;
-	float			angle1;
-	float			angle2;
-	float			angle3;
-
-	byte			u3;
-*/
-	int			unk4[4];
-
-	byte			weapon;     // weapon
-	byte			offHandIndex;
-	signed char	forwardmove, rightmove, upmove;
-	byte			unk[7];
+	int			buttons;
+	int			angles[3];
+	byte weapon;
+	byte offHandIndex;
+	byte field_16;
+	byte field_17;
+	int field_18;
+	int field_1C;
 } usercmd_t;
 
 
@@ -358,7 +352,6 @@ typedef struct {
 	int clientCanSpectate;		// 0x3004
 	int freeaddr1;			// 0x3008
 
-	int clientState;		// 0x300c
 } clientPersistant_t;
 
 

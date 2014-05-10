@@ -24,7 +24,7 @@
 #include "q_shared.h"
 #include "qcommon_mem.h"
 
-#define MEM_SIZE 140 //Megabyte
+#define MEM_SIZE 200 //Megabyte
 
 void* Mem_AlignedAlloc(unsigned int align, unsigned int size)
 {
