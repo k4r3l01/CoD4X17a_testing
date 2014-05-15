@@ -475,12 +475,13 @@ __optimize3 __regparm1 void SV_DirectConnect( netadr_t *from ) {
 
 	//Get new slot for client
 	// check for privateClient password
-    qboolean active = qfalse;
     password = Info_ValueForKey( userinfo, "password" );
-        
+
+	if(!newcl)
+		PHandler_Event(PLUGINS_ONPLAYERCONNECTING,&newcl,&cl,password);
+    
     if(!newcl){
-        PHandler_Event(PLUGINS_ONPLAYERCONNECTING,&newcl,&cl,password,&active);
-        if ( !strcmp( password, sv_privatePassword->string ) && !active) {
+        if ( !strcmp( password, sv_privatePassword->string )) {
 			for ( j = 0; j < sv_privateClients->integer ; j++) {
 				cl = &svs.clients[j];
 				if (cl->state == CS_FREE) {
@@ -925,13 +926,13 @@ __cdecl void SV_DropClient( client_t *drop, const char *reason ) {
 	}
 
 
-/*	if(SEH_StringEd_GetString( reason )){
+	if(SEH_StringEd_GetString( reason )){
 		var_01[0] = 0x14;
 		var_01[1] = 0;
-	}else{*/
+	}else{
 		var_01[0] = 0;
-/*	}
-*/
+	}
+
 	if(!Q_stricmp(reason, "EXE_DISCONNECTED")){
 		dropreason = "EXE_LEFTGAME";
 	} else {

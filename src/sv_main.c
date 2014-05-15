@@ -46,6 +46,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <time.h>
 
 cvar_t	*sv_protocol;
 cvar_t	*sv_privateClients;		// number of clients reserved for password
@@ -94,6 +95,7 @@ cvar_t	*sv_demoCompletedCmd;
 cvar_t	*sv_master[MAX_MASTER_SERVERS];	// master server ip address
 cvar_t	*g_mapstarttime;
 cvar_t	*sv_uptime;
+cvar_t	*sv_starttime;
 
 cvar_t* sv_g_gametype;
 cvar_t* sv_mapname;
@@ -1560,6 +1562,8 @@ void	serverStatus_Write(){
                 XML_OpenTag(&xmlbase,"Data",2, "Name", "pswrd", "Value", "0");
             }
             XML_CloseTag(&xmlbase);
+			XML_OpenTag(&xmlbase,"Data",2, "Name", "sv_type", "Value", va("%d", sv_authorizemode->integer));
+            XML_CloseTag(&xmlbase);
         XML_CloseTag(&xmlbase);
 
         for ( i = 0, c = 0, cl = svs.clients; i < sv_maxclients->integer ; cl++, i++ ) {
@@ -1804,7 +1808,8 @@ void SV_InitCvarsOnce(void){
 	sv_password = Cvar_RegisterString("g_password", "", CVAR_ARCHIVE, "Password which is required to join this server");
 	g_motd = Cvar_RegisterString("g_motd", "", CVAR_ARCHIVE, "Message of the day, which getting shown to every player on his 1st spawn");
 	sv_uptime = Cvar_RegisterString("uptime", "", CVAR_SERVERINFO | CVAR_ROM, "Time the server is running since last restart");
-	sv_autodemorecord = Cvar_RegisterBool("sv_autodemorecord", qfalse, CVAR_ARCHIVE, "Automatically start from each connected client a demo.");
+	sv_starttime = Cvar_RegisterString("starttime", "", CVAR_SERVERINFO | CVAR_ROM, "Time the server is running since last restart");
+        sv_autodemorecord = Cvar_RegisterBool("sv_autodemorecord", qfalse, CVAR_ARCHIVE, "Automatically start from each connected client a demo.");
 	sv_demoCompletedCmd = Cvar_RegisterString("sv_demoCompletedCmd", "", CVAR_ARCHIVE, "This program will be executed when a demo has been completed. The demofilename will be passed as argument.");
 	sv_consayname = Cvar_RegisterString("sv_consayname", "^2Server: ^7", CVAR_ARCHIVE, "If the server broadcast text-messages this name will be used");
 	sv_contellname = Cvar_RegisterString("sv_contellname", "^5Server^7->^5PM: ^7", CVAR_ARCHIVE, "If the server broadcast text-messages this name will be used");
@@ -2668,7 +2673,8 @@ happen before SV_Frame is called
 ==================
 */
 __optimize3 __regparm1 qboolean SV_Frame( unsigned int usec ) {
-	unsigned int frameUsec;
+        time_t currenttime;
+        unsigned int frameUsec;
 	char mapname[MAX_QPATH];
 	client_t* client;
 	int i;
@@ -2837,21 +2843,26 @@ __optimize3 __regparm1 qboolean SV_Frame( unsigned int usec ) {
 
 		int d, h, m;
 		int uptime;
-
-		uptime = Sys_Seconds();
+                time_t starttime;
+                char *stime;
+                currenttime = time(NULL);
+                uptime = Sys_Seconds();
+                starttime = currenttime - uptime;
 		d = uptime/(60*60*24);
 //		uptime = uptime%(60*60*24);
 		h = uptime/(60*60);
 //		uptime = uptime%(60*60);
 		m = uptime/60;
-
-		if(h < 4)
-			Cvar_SetString(sv_uptime, va("%i minutes", m+h*60));
+                stime = ctime(&starttime);
+		stime[strlen(stime)-1] = 0;
+                
+                if(h < 4)
+			Cvar_SetString(sv_uptime, va("%i minutes", m));
 		else if(d < 3)
-			Cvar_SetString(sv_uptime, va("%i hours", h+d*24));
+			Cvar_SetString(sv_uptime, va("%i hours", h));
 		else
 			Cvar_SetString(sv_uptime, va("%i days", d));
-
+                Cvar_SetString(sv_starttime,stime);
 		serverStatus_Write();
 
 	        PHandler_Event(PLUGINS_ONTENSECONDS, NULL);	// Plugin event

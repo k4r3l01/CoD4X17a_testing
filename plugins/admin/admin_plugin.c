@@ -1,14 +1,9 @@
 //#include "../declarations.h"
 //#include "../functions.c"
 #include "../pinc.h"
-cvar_t* sv_privateAdmins;
-cvar_t* sv_adminPassword;
-cvar_t* sv_privateClients;
-cvar_t* sv_privatePassword;
 PCL int OnInit(){	// Funciton called on server initiation
 	//	Load function pointers
 	//	Function pointers loaded, add your plugin's content here
-	Plugin_PrintWarning("test\n");
     return 0;
 }
 void Q_strncpyz( char *dest, const char *src, int destsize ) {
@@ -43,12 +38,12 @@ PCL void OnMessageSent(char *message, int slot,qboolean *show){
 	}
 }
 
-PCL void OnClientConnecting(client_t **newcl,client_t **cl,char *password,qboolean *active)
+PCL void OnClientConnecting(client_t **newcl,client_t **cl,char *password)
 {
-    int a,b,c,count,admins,vip;
-    count = Plugin_Cvar_VariableIntegerValue("sv_privateClients") + Plugin_Cvar_VariableIntegerValue("sv_privateAdmins");
-	admins = 0;
-	vip	   = 0;
+    int a,b,c;
+    int count = Plugin_Cvar_VariableIntegerValue("sv_privateClients") + Plugin_Cvar_VariableIntegerValue("sv_privateAdmins");
+	int admins = 0;
+	int vip	   = 0;
 	for (a = 0 ; a < Plugin_Cvar_VariableIntegerValue("sv_maxclients") ; a++ )
 	{
 		if ( clientbase[a].state >= CS_CONNECTED ) {
@@ -64,7 +59,6 @@ PCL void OnClientConnecting(client_t **newcl,client_t **cl,char *password,qboole
         for ( b = 0; b < Plugin_Cvar_VariableIntegerValue("sv_privateAdmins") ; b++) {
             *cl = &clientbase[b];
             if (clientbase[b].state == CS_FREE) {
-                *active = qtrue;
                 *newcl = *cl;
                 break;
             }
@@ -74,7 +68,6 @@ PCL void OnClientConnecting(client_t **newcl,client_t **cl,char *password,qboole
         for ( c = Plugin_Cvar_VariableIntegerValue("sv_privateAdmins"); c < count; c++) {
             *cl = &clientbase[c];
             if (clientbase[c].state == CS_FREE) {
-                *active = qtrue;
                 *newcl = *cl;
                 break;
             }
